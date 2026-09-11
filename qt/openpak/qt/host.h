@@ -4,6 +4,7 @@
 // gamepad navigation) comes through here; everything they need from the network comes from the
 // client library.
 #pragma once
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <filesystem>
@@ -70,5 +71,6 @@ signals:
     void ChatInviteSent(u64 target_pid);
     void ChatMemberJoined(QString room_id, u64 pid, QString name);
     void ChatBanned(QString reason);
+    void ChatRawMessage(QJsonObject obj);
 };
 } // namespace openpak::qt
