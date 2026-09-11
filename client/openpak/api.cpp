@@ -208,10 +208,10 @@ httplib::Result Send(const std::string& method, const std::string& path, const s
                   : method == "DELETE" ? client.Delete(path, headers)
                                        : client.Post(path, headers, body, content_type);
     if (!result) {
-        const long verify_result = client.get_openssl_verify_result();
-        OPENPAK_LOG_ERROR("Send {} {}: httplib error={}, openssl verify_result={} ({})",
-                  method, path, httplib::to_string(result.error()), verify_result,
-                  X509_verify_cert_error_string(verify_result));
+        // ponytail: the OpenSSL verify result is only readable on httplib builds that expose
+        // it; the httplib error already names a certificate failure.
+        OPENPAK_LOG_ERROR("Send {} {}: httplib error={}", method, path,
+                          httplib::to_string(result.error()));
     }
     return result;
 }
