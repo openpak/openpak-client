@@ -13,7 +13,16 @@
 #include <vector>
 #include "openpak/types.h"
 
+namespace httplib { class Client; }
+
 namespace WebService::OpenPakApi {
+
+// The base URL the account API talks to (openpak.org, or OPENPAK_API for a local stack) and
+// the shared HTTPS client, for the library's other modules and for hosts that need a raw
+// request beside the account API.
+std::string BaseUrl();
+httplib::Client& SharedClient();
+void ApplySystemCa(httplib::Client& client);
 
 struct LoginResult {
     bool ok = false;

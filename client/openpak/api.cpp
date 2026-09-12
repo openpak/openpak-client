@@ -150,6 +150,9 @@ void ApplyCaCertPath(httplib::Client& client) {
 #endif
 }
 
+void ApplyCaCertPath(httplib::Client& client); // defined below
+void ApplySystemCa(httplib::Client& client) { ApplyCaCertPath(client); }
+
 // "https://host[:port]" with no path. The token rides on these requests, so only https, or
 // loopback for a local stack, may receive it.
 std::optional<std::string> SanitizeBaseUrl(std::string raw) {
