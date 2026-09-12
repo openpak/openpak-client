@@ -361,15 +361,7 @@ Result Fetch(std::string const& platform) {
 
     Result out = Finish(platform, result ? &*result : nullptr, etag);
     OPENPAK_LOG_INFO("network profile: platform {} -> {} source, version {}", platform,
-                     [](Source s) {
-                         switch (s) {
-                         case Source::Fetched: return "fetched";
-                         case Source::Cached: return "cached";
-                         case Source::BuiltIn: return "built-in";
-                         }
-                         return "built-in";
-                     }(out.source),
-                     out.profile.version);
+                     SourceName(out.source), out.profile.version);
     return out;
 }
 
