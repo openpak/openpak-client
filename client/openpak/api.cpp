@@ -150,9 +150,6 @@ void ApplyCaCertPath(httplib::Client& client) {
 #endif
 }
 
-void ApplyCaCertPath(httplib::Client& client); // defined below
-void ApplySystemCa(httplib::Client& client) { ApplyCaCertPath(client); }
-
 // "https://host[:port]" with no path. The token rides on these requests, so only https, or
 // loopback for a local stack, may receive it.
 std::optional<std::string> SanitizeBaseUrl(std::string raw) {
@@ -316,6 +313,9 @@ std::mutex g_save_versions_mutex;
 std::map<std::string, std::string> g_save_versions;
 
 } // Anonymous namespace
+
+// Public: the network profile module (and hosts) reuse the shared client's CA handling.
+void ApplySystemCa(httplib::Client& client) { ApplyCaCertPath(client); }
 
 std::string BaseUrl() {
     static const std::string url = [] {
