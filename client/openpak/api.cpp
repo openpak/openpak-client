@@ -50,7 +50,8 @@ namespace WebService::OpenPakApi {
 namespace {
 
 constexpr const char* CanonicalUrl = "https://openpak.org";
-constexpr const char* SavesPlatform = "citron";
+std::string g_saves_platform = "citron";
+std::string g_save_device; // empty: report the platform name
 constexpr int TimeoutSeconds = 15;
 
 constexpr std::string_view NotAvailable = "Not available on OpenPak yet.";
@@ -407,6 +408,41 @@ LoginResult SignIn(const std::string& email, const std::string& password) {
     return out;
 }
 
+LoginResult SignInAccountOnly(const std::string& email, const std::string& password) {
+    LoginResult out;
+    const nlohmann::json credentials{{"email", email}, {"password", password}};
+    const auto minted = Send("POST", "/api/v1/token", credentials.dump(), {});
+    if (!minted) {
+        out.error = std::string{Unreachable};
+        return out;
+    }
+    if (minted->status == 401) {
+        out.error = "Wrong email or password.";
+        return out;
+    }
+    if (minted->status == 429) {
+        out.error = "Too many attempts. Wait a minute and try again.";
+        return out;
+    }
+    if (minted->status != 201 && minted->status != 200) {
+        out.error = ErrorFrom(minted->body, fmt::format("Sign-in failed (HTTP {}).", minted->status));
+        return out;
+    }
+    try {
+        out.bearer = nlohmann::json::parse(minted->body).value("token", std::string{});
+    } catch (const nlohmann::json::exception& e) {
+        out.error = fmt::format("Unexpected sign-in response: {}", e.what());
+        return out;
+    }
+    if (out.bearer.empty()) {
+        out.error = "The website issued no token.";
+        return out;
+    }
+    out.ok = true;
+    OPENPAK_LOG_INFO("SignInAccountOnly: signed in without a console identity");
+    return out;
+}
+
 OnlineStatus GetOnlineStatus() {
     // OpenPak has no per-account online gate: a signed-in account may play.
     OnlineStatus out;
@@ -428,12 +464,20 @@ std::string HashBcatSeedHex(const std::vector<u8>& data) {
     return {};
 }
 
+void SetSavesPlatform(const std::string& platform) {
+    g_saves_platform = platform;
+}
+
+void SetSaveDevice(const std::string& device) {
+    g_save_device = device;
+}
+
 std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex) {
     const std::string bearer = Bearer();
     if (bearer.empty()) {
         return std::nullopt;
     }
-    const std::string path = fmt::format("/api/v1/me/saves/{}/{}", SavesPlatform, title_id_hex);
+    const std::string path = fmt::format("/api/v1/me/saves/{}/{}", g_saves_platform, title_id_hex);
     const auto result = Send("GET", path, {}, bearer);
     if (ClearSessionIfRejected(result)) {
         return std::nullopt;
@@ -452,20 +496,22 @@ std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex) {
     return std::vector<u8>(result->body.begin(), result->body.end());
 }
 
-std::string PushSave(const std::string& title_id_hex, std::span<const u8> data) {
+std::string PushSave(const std::string& title_id_hex, const std::uint8_t* data,
+                     std::size_t size) {
     const std::string bearer = Bearer();
     if (bearer.empty()) {
         return "Not signed in.";
     }
-    httplib::Headers headers{{"X-Save-Device", "citron"}};
+    httplib::Headers headers{{"X-Save-Device",
+        g_save_device.empty() ? g_saves_platform : g_save_device}};
     {
         std::lock_guard lock{g_save_versions_mutex};
         if (const auto it = g_save_versions.find(title_id_hex); it != g_save_versions.end() && !it->second.empty()) {
             headers.emplace("X-Save-Base", it->second);
         }
     }
-    const std::string body(reinterpret_cast<const char*>(data.data()), data.size());
-    const std::string path = fmt::format("/api/v1/me/saves/{}/{}", SavesPlatform, title_id_hex);
+    const std::string body(reinterpret_cast<const char*>(data), size);
+    const std::string path = fmt::format("/api/v1/me/saves/{}/{}", g_saves_platform, title_id_hex);
     const auto result = Send("PUT", path, body, bearer, headers, "application/octet-stream");
     if (ClearSessionIfRejected(result)) {
         return std::string{SessionExpired};
@@ -710,5 +756,11 @@ std::optional<int> PingBackend() {
     }
     return static_cast<int>(elapsed_ms.count());
 }
+
+#if defined(__cpp_lib_span)
+std::string PushSave(const std::string& title_id_hex, std::span<const u8> data) {
+    return PushSave(title_id_hex, data.data(), data.size());
+}
+#endif
 
 } // namespace WebService::OpenPakApi

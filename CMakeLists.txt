@@ -35,6 +35,12 @@ add_library(openpak::client ALIAS openpak_client)
 target_include_directories(openpak_client PUBLIC client)
 target_link_libraries(openpak_client PUBLIC fmt::fmt nlohmann_json::nlohmann_json httplib::httplib OpenSSL::SSL OpenSSL::Crypto)
 target_compile_definitions(openpak_client PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT ENABLE_WEB_SERVICE)
+# Some hosts (Dolphin) build with -fno-exceptions globally; the library and its
+# dependencies throw and catch, so they are re-enabled here no matter what a
+# host decided for itself.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(openpak_client PRIVATE -fexceptions)
+endif()
 
 if(OPENPAK_BUILD_QT)
   find_package(Qt6 REQUIRED COMPONENTS Widgets Network)

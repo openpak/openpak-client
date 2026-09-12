@@ -6,7 +6,9 @@
 #include <functional>
 #include <map>
 #include <optional>
+#if __has_include(<span>)
 #include <span>
+#endif
 #include <string>
 #include <vector>
 #include "openpak/types.h"
@@ -39,6 +41,12 @@ std::string BaseUrl();
 // for the account's Switch identity. Also fetches the OpenPak CA into config/openpak/ca.pem so
 // the redirected Nintendo names can be verified from the next launch on.
 LoginResult SignIn(const std::string& email, const std::string& password);
+
+// Sign-in for families with no console identity of their own (Wii and DS: WFC
+// minted no accounts). Mints the website bearer and nothing else — no /me/<family>
+// fetch, no pid, no token. A host that signs in this way reads Common::OpenPakAccount::
+// HasBearer() rather than IsLinked(), and cloud saves work from the bearer alone.
+LoginResult SignInAccountOnly(const std::string& email, const std::string& password);
 
 // Fetches the OpenPak CA over public TLS and stores it for the SSL service. Best effort.
 bool FetchCA();
@@ -101,7 +109,9 @@ struct ReceivedInvitation {
 
 // Sends target_pids (must already be mutual friends of the caller) an invitation carrying
 // app_param verbatim. Returns an empty string on success, else a message fit to show the user.
+#if defined(__cpp_lib_span)
 std::string SendInvitation(const std::vector<u64>& target_pids, std::span<const u8> app_param);
+#endif
 
 // Pops (consumes) every invitation currently queued for this account. Empty on failure or if
 // none are waiting -- there is no way to distinguish the two from this call alone, matching
@@ -184,8 +194,18 @@ std::optional<std::vector<u8>> PullSave(const std::string& title_id_hex);
 
 // Uploads this title's save. The server rejects a drastically smaller upload against an existing
 // larger save rather than clobbering it (kept=true in that case, still reported as success here).
-// Returns an error message fit to show the user, or empty on success.
+// Returns an error message fit to show the user, or empty on success. The pointer overload is
+// the portable one: hosts built as C++17 (melonDS) have no std::span to pass.
+std::string PushSave(const std::string& title_id_hex, const std::uint8_t* data, std::size_t size);
+#if defined(__cpp_lib_span)
 std::string PushSave(const std::string& title_id_hex, std::span<const u8> data);
+#endif
+
+// Which platform segment the saves API paths use (default "citron"; the Wii and DS emulators
+// pass "wii" and "ds" — prds/emulator-integration-prd.md S-1) and what name uploads report as
+// the machine that made them (default: the platform).
+void SetSavesPlatform(const std::string& platform);
+void SetSaveDevice(const std::string& device);
 
 struct Profile {
     bool ok = false;
