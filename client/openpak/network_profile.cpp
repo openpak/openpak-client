@@ -188,6 +188,15 @@ std::optional<std::string> Validate(Profile const& profile, std::string const& e
     return std::nullopt;  // valid
 }
 
+char const* SourceName(Source s) {
+    switch (s) {
+    case Source::Fetched: return "fetched";
+    case Source::Cached: return "cached";
+    case Source::BuiltIn: return "built-in";
+    }
+    return "built-in";
+}
+
 Profile BuiltIn(std::string const& platform) {
     Profile p;
     p.platform = platform;
