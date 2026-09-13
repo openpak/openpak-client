@@ -49,6 +49,13 @@ void Configure(std::string server_host, int port, std::string ca_path);
 /// Whether a server has been configured and its CA is readable.
 bool Enabled();
 
+/// The OpenPak CA in DER form, fetched and cached if it is not on disk yet, or empty.
+///
+/// A title that verifies the server itself -- Stardew reads the console's own certificate store
+/// and checks the chain -- is handed Nintendo's real CAs by an emulator that emulates that store
+/// properly, and no OpenPak certificate can ever satisfy those. This is what goes in their place.
+std::vector<std::uint8_t> CaCertificateDer();
+
 /// Make sure a usable id_token is cached, running the chain if not. Never throws: a build that
 /// cannot reach OpenPak must behave like a console that cannot reach Nintendo.
 bool Ensure();
@@ -88,6 +95,11 @@ void StartHeartbeat(std::function<std::string()> current_title_id);
 
 /// Say we are going, so the account drops offline now rather than when the lease runs out.
 void GoOffline();
+
+/// Fill the friend cache the guest's friend:u reads, and publish the presence the running title
+/// set. The Qt host does this on its own timers; a build without one -- Android -- has nothing
+/// else that would, and a title whose friend list is empty cannot join anybody.
+void RefreshGuestFriends();
 
 /// What the native inbox held at the last poll, dismissals removed. Never stale-blocking: the
 /// heartbeat refreshes it.

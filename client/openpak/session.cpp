@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -24,6 +25,9 @@
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 
+#include "openpak/account.h"
+#include "openpak/api.h"
+#include "openpak/friends_cache.h"
 #include "openpak/log.h"
 #include "openpak/platform.h"
 #include "openpak/session.h"
@@ -79,6 +83,7 @@ struct State {
     std::string nickname;
     std::string friend_code;
 
+    std::vector<std::uint8_t> ca_der; ///< The CA as the guest's certificate store wants it.
     std::vector<Invitation> invitations;
     std::map<std::string, std::string> sender_names;
     std::vector<std::string> dismissed;
@@ -167,8 +172,31 @@ std::string ServerKey(const State& state) {
     return key;
 }
 
-std::filesystem::path DevicePath(const State& state, const char* suffix) {
-    return Platform::ConfigDir() / "openpak" / fmt::format("device-{}.{}", ServerKey(state), suffix);
+/// Where to reach OpenPak, copied out of the state rather than read through it.
+///
+/// Two threads want these at once: the heartbeat, which is asking every ten seconds, and
+/// whatever calls Configure -- on Android that is the app at launch AND the account service the
+/// first time a game asks for an id_token. Reading the strings straight out of the state while
+/// the other thread rewrites them is a data race, and the crash it produces lands exactly where
+/// a title reaches the network.
+struct Endpoint {
+    std::string host;
+    int port = 443;
+    std::string ca_path;
+    std::string key; ///< For file names: one device account and certificate per server.
+};
+
+Endpoint EndpointOfLocked(const State& state) {
+    return {state.server_host, state.port, state.ca_path, ServerKey(state)};
+}
+
+Endpoint EndpointSnapshot(State& state) {
+    std::lock_guard lock{state.mutex};
+    return EndpointOfLocked(state);
+}
+
+std::filesystem::path DevicePath(const Endpoint& endpoint, const char* suffix) {
+    return Platform::ConfigDir() / "openpak" / fmt::format("device-{}.{}", endpoint.key, suffix);
 }
 
 /// A self-signed certificate, kept per server, presented on every OpenPak host.
@@ -176,9 +204,9 @@ std::filesystem::path DevicePath(const State& state, const char* suffix) {
 /// A real console proves itself with the certificate in its NAND, and that is how the server
 /// tells consoles apart; an emulator has none, and without this every install would arrive as
 /// the same anonymous device. It asserts nothing about hardware -- it is a stable identifier.
-bool EnsureClientCertificate(const State& state) {
-    const std::filesystem::path cert_path = DevicePath(state, "pem");
-    const std::filesystem::path key_path = DevicePath(state, "key");
+bool EnsureClientCertificate(const Endpoint& endpoint) {
+    const std::filesystem::path cert_path = DevicePath(endpoint, "pem");
+    const std::filesystem::path key_path = DevicePath(endpoint, "key");
 
     if (std::filesystem::exists(cert_path) && std::filesystem::exists(key_path)) {
         return true;
@@ -244,19 +272,19 @@ bool EnsureClientCertificate(const State& state) {
 ///
 /// The url keeps the Nintendo name so SNI and the Host header carry it -- that name is how
 /// OpenPak decides which service answers -- while the socket goes where the user pointed it.
-std::unique_ptr<httplib::SSLClient> MakeClient(const State& state, const char* host) {
-    auto client = std::make_unique<httplib::SSLClient>(host, state.port,
-                                                       DevicePath(state, "pem").string(),
-                                                       DevicePath(state, "key").string());
+std::unique_ptr<httplib::SSLClient> MakeClient(const Endpoint& endpoint, const char* host) {
+    auto client = std::make_unique<httplib::SSLClient>(host, endpoint.port,
+                                                       DevicePath(endpoint, "pem").string(),
+                                                       DevicePath(endpoint, "key").string());
 
-    client->set_hostname_addr_map({{host, state.server_host}});
+    client->set_hostname_addr_map({{host, endpoint.host}});
 
     // Pin the OpenPak CA when there is one. Without it the chain still runs unverified, which is
     // the posture the guest's own TLS already takes while OpenPak is on (ssl_backend_openssl):
     // refusing here would mean a fresh install could not sign in to fetch the CA in the first
     // place. ponytail: fetch ca.pem on first run and make this unconditional.
-    if (!state.ca_path.empty() && std::filesystem::exists(state.ca_path)) {
-        client->set_ca_cert_path(state.ca_path);
+    if (!endpoint.ca_path.empty() && std::filesystem::exists(endpoint.ca_path)) {
+        client->set_ca_cert_path(endpoint.ca_path);
         client->enable_server_certificate_verification(true);
     } else {
         client->enable_server_certificate_verification(false);
@@ -305,7 +333,7 @@ std::string Text(const nlohmann::json& object, const char* key) {
 }
 
 void LoadDeviceAccount(State& state) {
-    const std::string contents = Platform::ReadFile(DevicePath(state, "json"));
+    const std::string contents = Platform::ReadFile(DevicePath(EndpointOfLocked(state), "json"));
     if (contents.empty()) {
         return;
     }
@@ -322,7 +350,7 @@ void LoadDeviceAccount(State& state) {
 
 void SaveDeviceAccount(const State& state) {
     const nlohmann::json out{{"id", state.device_id}, {"password", state.device_password}};
-    const std::filesystem::path path = DevicePath(state, "json");
+    const std::filesystem::path path = DevicePath(EndpointOfLocked(state), "json");
 
     Platform::CreateParentDirs(path);
     Platform::WriteFile(path, out.dump());
@@ -344,12 +372,14 @@ std::int64_t Now() {
 /// the same login plus the binding to a person -- after it, the id_token the guest receives
 /// carries the nnex claim a title server needs to know who is playing.
 bool LoginLocked(State& state, const std::string& account_id_token, std::string& error) {
-    if (!EnsureClientCertificate(state)) {
+    const Endpoint endpoint = EndpointOfLocked(state);
+
+    if (!EnsureClientCertificate(endpoint)) {
         error = "Could not create this install's device certificate.";
         return false;
     }
 
-    auto dauth = MakeClient(state, DauthHost);
+    auto dauth = MakeClient(endpoint, DauthHost);
 
     const auto challenge_body = Parsed(dauth->Post("/v8/challenge"), "dauth challenge");
     if (!challenge_body) {
@@ -384,7 +414,7 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
     const std::string device_token =
         Text((*device_tokens)["results"][0], "device_auth_token");
 
-    auto baas = MakeClient(state, BaasHost);
+    auto baas = MakeClient(endpoint, BaasHost);
 
     const httplib::Params exchange{
         {"assertion", device_token},
@@ -508,7 +538,7 @@ void Presence(State& state, const std::string& status) {
                          {"value", 0}});
     }
 
-    auto baas = MakeClient(state, BaasHost);
+    auto baas = MakeClient(EndpointSnapshot(state), BaasHost);
 
     const auto result =
         baas->Patch(fmt::format("/1.0.0/users/{}/device_accounts/{}", user_id, device_id),
@@ -529,7 +559,7 @@ std::string SenderName(State& state, const std::string& sender_id, const std::st
         }
     }
 
-    auto baas = MakeClient(state, BaasHost);
+    auto baas = MakeClient(EndpointSnapshot(state), BaasHost);
 
     const auto found =
         Parsed(baas->Get(fmt::format("/1.0.0/users?filter.id.$in={}", sender_id), Bearer(token)),
@@ -551,6 +581,59 @@ std::string SenderName(State& state, const std::string& sender_id, const std::st
 }
 
 } // namespace
+
+std::vector<std::uint8_t> CaCertificateDer() {
+    State& state = Get();
+
+    std::string path;
+    {
+        std::lock_guard lock{state.mutex};
+        if (!state.ca_der.empty()) {
+            return state.ca_der;
+        }
+        path = state.ca_path;
+    }
+
+    if (path.empty()) {
+        return {};
+    }
+
+    std::string pem = Platform::ReadFile(path);
+
+    if (pem.empty()) {
+        // Not on disk yet: the website serves it over ordinary public TLS, which is the one
+        // request in this whole stack that does not depend on trusting OpenPak first.
+        if (!WebService::OpenPakApi::FetchCA()) {
+            OPENPAK_LOG_WARNING("[OpenPak] No CA available; a title that checks the chain itself "
+                                "will refuse the connection");
+            return {};
+        }
+        pem = Platform::ReadFile(path);
+    }
+
+    // PEM is the DER the store wants, base64 between the armour lines. The first certificate is
+    // the CA; anything after it in the file is not what a root slot holds.
+    const std::size_t begin = pem.find("-----BEGIN CERTIFICATE-----");
+    const std::size_t end = pem.find("-----END CERTIFICATE-----", begin);
+
+    if (begin == std::string::npos || end == std::string::npos) {
+        OPENPAK_LOG_WARNING("[OpenPak] {} is not a PEM certificate", path);
+        return {};
+    }
+
+    const std::size_t body = begin + std::strlen("-----BEGIN CERTIFICATE-----");
+    std::vector<std::uint8_t> der = Base64Decode(std::string_view{pem}.substr(body, end - body));
+
+    {
+        std::lock_guard lock{state.mutex};
+        state.ca_der = der;
+    }
+
+    OPENPAK_LOG_INFO("[OpenPak] CA loaded for the guest's own certificate store ({} bytes)",
+                     der.size());
+
+    return der;
+}
 
 void Configure(std::string server_host, int port, std::string ca_path) {
     State& state = Get();
@@ -618,11 +701,13 @@ std::string LinkWithPassword(const std::string& email, const std::string& passwo
     State& state = Get();
     std::lock_guard lock{state.mutex};
 
-    if (!EnsureClientCertificate(state)) {
+    const Endpoint endpoint = EndpointOfLocked(state);
+
+    if (!EnsureClientCertificate(endpoint)) {
         return "Could not create this install's device certificate.";
     }
 
-    auto accounts = MakeClient(state, NaHost);
+    auto accounts = MakeClient(endpoint, NaHost);
 
     const std::string authorize =
         fmt::format("/connect/1.0.0/authorize?response_type=code&client_id={}&redirect_uri={}",
@@ -744,7 +829,7 @@ bool RefreshInvitations() {
         return false;
     }
 
-    auto five = MakeClient(state, FiveHost);
+    auto five = MakeClient(EndpointSnapshot(state), FiveHost);
 
     // Read state is not a filter: the same account signed in on a console marks these read from
     // over there, and that is no reason for this machine to have missed it.
@@ -833,7 +918,7 @@ void DismissInvitation(const std::string& invitation_id) {
         return;
     }
 
-    auto five = MakeClient(state, FiveHost);
+    auto five = MakeClient(EndpointSnapshot(state), FiveHost);
 
     const nlohmann::json patch = nlohmann::json::array({
         {{"op", "replace"},
@@ -846,6 +931,41 @@ void DismissInvitation(const std::string& invitation_id) {
 
     if (!result || result->status != 200) {
         OPENPAK_LOG_DEBUG("[OpenPak] Marking invitation {} read did not land", invitation_id);
+    }
+}
+
+void RefreshGuestFriends() {
+    if (!Common::OpenPakAccount::IsLinked()) {
+        return;
+    }
+
+    const WebService::OpenPakApi::FriendList fetched = WebService::OpenPakApi::GetFriends();
+    if (!fetched.ok) {
+        return;
+    }
+
+    std::vector<Common::NextendoFriends::Entry> cache;
+    cache.reserve(fetched.friends.size());
+
+    for (const auto& entry : fetched.friends) {
+        cache.push_back({
+            entry.pid,
+            entry.name,
+            entry.presence_status,
+            entry.app_field,
+            Base64Decode(entry.image_base64),
+        });
+    }
+
+    Common::NextendoFriends::Set(std::move(cache));
+
+    // What the running title published about itself goes the other way, or friends see somebody
+    // sitting in a menu while they are hosting a farm.
+    s32 status = 0;
+    std::string app_field;
+
+    if (Common::NextendoFriends::TakeLocalPresenceForPublish(status, app_field)) {
+        WebService::OpenPakApi::PushPresence(status, app_field, {}, {});
     }
 }
 
@@ -874,6 +994,10 @@ void StartHeartbeat(std::function<std::string()> current_title_id) {
             if (tick % InvitationEveryNthBeat == 0) {
                 RefreshInvitations();
             }
+
+            // The guest's own friend list, kept warm here because nothing else on this build
+            // does it. NEX titles poll friend:u in a loop and must never wait on a network call.
+            RefreshGuestFriends();
 
             // Presence is not worth a louder failure than a debug line: the account simply goes
             // quiet, which is exactly what it should look like.
