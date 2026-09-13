@@ -42,7 +42,8 @@
 #include "openpak/platform.h"
 #include "openpak/log.h"
 #include "openpak/account.h"
-#include "openpak/platform.h"
+#include "openpak/friends_cache.h"
+#include "openpak/session.h"
 #include "openpak/api.h"
 
 namespace WebService::OpenPakApi {
@@ -676,8 +677,48 @@ std::string SendInvitation(const std::vector<u64>& target_pids, std::span<const 
     return std::string{NotAvailable};
 }
 
+// Invitations arrive on the native inbox, not here: a console sends one to
+// app.lp1.five.nintendo.net and the core's own store never sees it. The session module holds
+// what the last poll found; this pops it, which is the contract the friend service relies on --
+// an invitation handed to the guest must not be handed over twice.
 std::vector<ReceivedInvitation> PollInvitations() {
-    return {};
+    const std::vector<openpak::client::session::Invitation> waiting =
+        openpak::client::session::Invitations();
+
+    if (waiting.empty()) {
+        return {};
+    }
+
+    // The native wire names the sender by BAAS id; the guest wants the pid its friend list is
+    // keyed by. The sender is necessarily a friend -- the server refuses an invitation between
+    // strangers -- so the friend cache can name them.
+    // ponytail: matched by name; have the adapter carry the pid on the inbox item if two friends
+    // ever share one.
+    const std::vector<Common::NextendoFriends::Entry> friends = Common::NextendoFriends::Get();
+
+    std::vector<ReceivedInvitation> out;
+    out.reserve(waiting.size());
+
+    for (const openpak::client::session::Invitation& invitation : waiting) {
+        ReceivedInvitation one;
+        one.from_name = invitation.sender_name;
+        one.app_param = invitation.app_param;
+
+        for (const Common::NextendoFriends::Entry& entry : friends) {
+            if (entry.name == invitation.sender_name) {
+                one.from_pid = entry.pid;
+                break;
+            }
+        }
+
+        out.push_back(std::move(one));
+
+        openpak::client::session::DismissInvitation(invitation.id);
+    }
+
+    OPENPAK_LOG_INFO("[OpenPak] Handing {} invitation(s) to the guest", out.size());
+
+    return out;
 }
 
 Lobby GetMyLobby() {
