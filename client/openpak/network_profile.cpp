@@ -44,6 +44,10 @@ const std::vector<std::string> BuiltInSuffixes = {
 const std::vector<std::string> AllowedFamilies = {
     ".nintendo.net",       ".nintendo.com",  ".nintendo.co.jp", ".nintendowifi.net",
     ".nintendo-europe.com", ".gamespy.com",  ".openpak.org",
+    // Third-party services OpenPak serves in place of their retail ones: a title that matchmakes
+    // outside Nintendo's own names can only be redirected if its family is one this build is
+    // willing to be told about.
+    ".among.us",           ".photonengine.io",
 };
 
 const std::map<std::string, std::string> BuiltInOverrides = {
