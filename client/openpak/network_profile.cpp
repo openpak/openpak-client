@@ -50,9 +50,12 @@ const std::vector<std::string> AllowedFamilies = {
     ".among.us",           ".photonengine.io",
 };
 
-const std::map<std::string, std::string> BuiltInOverrides = {
-    {"nncs2-lp1.n.n.srv.nintendo.net", "145.241.228.207"},
-};
+// Names with an address of their own. Empty on purpose: splitting the NAT check's two probes
+// across two hosts is what a console does on retail, but against OpenPak it is what stops a
+// title dead -- Ryujinx works with both probes landing on the server, and this build only
+// diverged from that because it applied the entry below even when a profile was in force.
+// The profile is where an address of a name's own belongs if one is ever needed again.
+const std::map<std::string, std::string> BuiltInOverrides = {};
 
 std::filesystem::path StorePath() {
     return Platform::ConfigDir() / "openpak" / "network-profile.json";

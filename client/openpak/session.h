@@ -10,6 +10,7 @@
 //
 //   POST dauth /v8/challenge            a challenge to mix into the device MAC
 //   POST dauth /v8/device_auth_tokens   a device token
+//   POST aauth /v5/application_auth_token  a per-title token, when a title is bound below
 //   POST baas  /1.0.0/application/token an application token, the Bearer for the rest
 //   POST baas  /1.0.0/users             a device account -- once, then kept on disk
 //   POST baas  /1.0.0/login             the id_token the game is actually asking for
@@ -59,6 +60,16 @@ std::vector<std::uint8_t> CaCertificateDer();
 /// Make sure a usable id_token is cached, running the chain if not. Never throws: a build that
 /// cannot reach OpenPak must behave like a console that cannot reach Nintendo.
 bool Ensure();
+
+/// The title that is about to ask for a token, as 16 hex digits and its own version string.
+///
+/// A console's baas login carries an application_auth_token naming the running title, and the
+/// title's own online stack checks that binding before it will use the id_token: one minted for
+/// another game -- or for no game at all -- connects fine and then never speaks, which is an
+/// emulator that looks online and hangs. Empty (the game list, a sign-in before anything is
+/// loaded) leaves the chain unbound, the shape it always had. The cached token is keyed by the
+/// binding, so switching titles re-runs the chain on the next Ensure.
+void SetApplication(std::string application_id, std::string application_version);
 
 /// The id_token OpenPak issued, or empty when there is none to give.
 std::string IdToken();
