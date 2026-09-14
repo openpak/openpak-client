@@ -39,6 +39,7 @@ namespace {
 // Nintendo's own names, on purpose: OpenPak answers to them and routes by SNI, so one address
 // serves the whole chain and a title sees the names it was built to see.
 constexpr const char* DauthHost = "dauth-lp1.ndas.srv.nintendo.net";
+constexpr const char* AauthHost = "aauth-lp1.ndas.srv.nintendo.net";
 constexpr const char* BaasHost = "e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com";
 
 // Where an invitation sent by a console lands. The website's /api/v1/me/invitations is the
@@ -77,11 +78,15 @@ struct State {
 
     std::string id_token;
     std::chrono::system_clock::time_point id_token_expiry;
+    std::string id_token_application; ///< The title the cached id_token was minted for.
     std::string application_token; ///< User-scoped after login: what presence speaks with.
     std::string user_id;
     std::uint64_t nsa_id = 0;
     std::string nickname;
     std::string friend_code;
+
+    std::string application_id;      ///< The bound title, 16 hex digits, or empty on the game list.
+    std::string application_version; ///< The bound title's own version string.
 
     std::vector<std::uint8_t> ca_der; ///< The CA as the guest's certificate store wants it.
     std::vector<Invitation> invitations;
@@ -95,6 +100,25 @@ struct State {
     std::condition_variable heartbeat_wake;
     std::mutex heartbeat_mutex;
     std::atomic<bool> heartbeat_running{false};
+
+    /// The heartbeat outlives everything else here, so it has to be stopped before the members it
+    /// reads are destroyed. A std::thread that is still joinable when it is destroyed calls
+    /// std::terminate, which is an abort on every quit -- this runs from __cxa_atexit when the
+    /// function-local static below is torn down. Stop and join, never detach: detaching trades
+    /// the abort for a thread reading this object after it is gone.
+    ~State() {
+        if (heartbeat_running.exchange(false)) {
+            heartbeat_wake.notify_all();
+        }
+
+        if (heartbeat.joinable()) {
+            heartbeat.join();
+        }
+    }
+
+    State() = default;
+    State(const State&) = delete;
+    State& operator=(const State&) = delete;
 };
 
 State& Get() {
@@ -357,8 +381,10 @@ void SaveDeviceAccount(const State& state) {
 }
 
 /// Five minutes of slack: a token that expires mid-session is worse than one fetched early.
+/// A token also belongs to the title it names: one minted for another game (or for no game) is
+/// refused by the title's own online stack, so a changed binding is as stale as an old expiry.
 bool Fresh(const State& state) {
-    return !state.id_token.empty() &&
+    return !state.id_token.empty() && state.id_token_application == state.application_id &&
            std::chrono::system_clock::now() < state.id_token_expiry - std::chrono::minutes(5);
 }
 
@@ -414,6 +440,28 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
     const std::string device_token =
         Text((*device_tokens)["results"][0], "device_auth_token");
 
+    // The per-title binding. A console's baas login carries an application_auth_token naming the
+    // running title, and the title's own online stack checks it: an id_token minted for another
+    // game, or for no game at all, connects and then never speaks -- the emulator equivalent of a
+    // console that is online but will not start a session. aauth issues one against the device
+    // the token above just vouched for, so the chain keeps the console's shape end to end.
+    std::string application_auth_token;
+    if (!state.application_id.empty()) {
+        auto aauth = MakeClient(endpoint, AauthHost);
+
+        const httplib::Params application{
+            {"application_id", state.application_id},
+            {"application_version", state.application_version},
+        };
+
+        const auto answered =
+            Parsed(aauth->Post("/v5/application_auth_token", Bearer(device_token), application),
+                   "application auth token");
+        if (answered) {
+            application_auth_token = Text(*answered, "application_auth_token");
+        }
+    }
+
     auto baas = MakeClient(endpoint, BaasHost);
 
     const httplib::Params exchange{
@@ -456,6 +504,9 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
     if (!account_id_token.empty()) {
         login_params.emplace("idToken", account_id_token);
     }
+    if (!application_auth_token.empty()) {
+        login_params.emplace("appAuthNToken", application_auth_token);
+    }
 
     const char* path = account_id_token.empty() ? "/1.0.0/login" : "/1.0.0/federation";
 
@@ -467,6 +518,7 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
     }
 
     state.id_token = Text(*login, "idToken");
+    state.id_token_application = state.application_id;
 
     const auto expires = login->find("expiresIn");
     const int seconds = expires != login->end() && expires->is_number() ? expires->get<int>() : 3600;
@@ -645,6 +697,14 @@ void Configure(std::string server_host, int port, std::string ca_path) {
                                     : std::move(ca_path);
 
     LoadDeviceAccount(state);
+}
+
+void SetApplication(std::string application_id, std::string application_version) {
+    State& state = Get();
+    std::lock_guard lock{state.mutex};
+
+    state.application_id = std::move(application_id);
+    state.application_version = std::move(application_version);
 }
 
 bool Enabled() {
