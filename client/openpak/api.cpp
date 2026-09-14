@@ -36,6 +36,11 @@
 #include <nlohmann/json.hpp>
 #include <openssl/x509_vfy.h>
 
+#ifdef __ANDROID__
+// The patched OpenSSL the emulator builds against ships the public roots as a PEM blob.
+#include <openssl/cert.h>
+#endif
+
 #include "openpak/platform.h"
 #include "openpak/platform.h"
 #include "openpak/platform.h"
@@ -127,11 +132,14 @@ bool IsLoopback(const std::string& host) {
     return host == "127.0.0.1" || host == "localhost" || host == "[::1]" || host == "::1";
 }
 
-// CMakeModules/openssl_build.cmake links web_service against a static OpenSSL built from source,
-// whose default cert paths point inside the build tree. On Linux, point at the distro bundle;
-// elsewhere httplib's own native store loader takes over.
+// The static OpenSSL built from source has default cert paths that point inside the build tree.
+// On desktop Linux, point at the distro bundle. On Android there is no bundle on disk at all, so
+// load the public roots the patched OpenSSL ships in memory -- the same store the emulator's own
+// web backend loads. Elsewhere httplib's native store loader takes over.
 void ApplyCaCertPath(httplib::Client& client) {
-#ifdef __linux__
+#ifdef __ANDROID__
+    client.load_ca_cert_store(kCert, sizeof(kCert));
+#elif defined(__linux__)
     static constexpr std::array<const char*, 4> candidates{
         "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Arch
         "/etc/pki/tls/certs/ca-bundle.crt",   // Fedora/RHEL/CentOS
@@ -313,6 +321,9 @@ std::mutex g_save_versions_mutex;
 std::map<std::string, std::string> g_save_versions;
 
 } // Anonymous namespace
+
+// Public: the network profile module (and hosts) reuse the shared client's CA handling.
+void ApplySystemCa(httplib::Client& client) { ApplyCaCertPath(client); }
 
 std::string BaseUrl() {
     static const std::string url = [] {

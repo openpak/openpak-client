@@ -11,6 +11,8 @@
 #include <vector>
 #include "openpak/types.h"
 
+namespace httplib { class Client; }
+
 namespace WebService::OpenPakApi {
 
 struct LoginResult {
@@ -34,6 +36,10 @@ struct OnlineStatus {
 // The API base url. OPENPAK_API overrides it; only https or loopback is accepted, because this
 // request carries the account token.
 std::string BaseUrl();
+
+// The shared HTTPS client's CA handling, for the library's other modules and for hosts that
+// need a raw request beside the account API.
+void ApplySystemCa(httplib::Client& client);
 
 // Signs in with the OpenPak account's email and password: mints a website API token, then asks
 // for the account's Switch identity. Also fetches the OpenPak CA into config/openpak/ca.pem so

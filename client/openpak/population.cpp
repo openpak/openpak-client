@@ -8,6 +8,11 @@
 
 #include <httplib.h>
 
+#ifdef __ANDROID__
+// The patched OpenSSL the emulator builds against ships the public roots as a PEM blob.
+#include <openssl/cert.h>
+#endif
+
 #include "openpak/log.h"
 
 namespace WebService {
@@ -15,7 +20,9 @@ namespace WebService {
 namespace {
 
 void ApplyCaCertPath(httplib::Client& client) {
-#ifdef __linux__
+#ifdef __ANDROID__
+    client.load_ca_cert_store(kCert, sizeof(kCert));
+#elif defined(__linux__)
     static constexpr std::array<const char*, 4> candidates{
         "/etc/ssl/certs/ca-certificates.crt",
         "/etc/pki/tls/certs/ca-bundle.crt",

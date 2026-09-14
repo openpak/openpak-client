@@ -11,6 +11,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include "openpak/api.h"
 #include "openpak/log.h"
 #include "openpak/network_profile.h"
 #include "openpak/platform.h"
@@ -215,6 +216,9 @@ bool Refresh(const std::string& website_url, const std::string& platform) {
     client.set_connection_timeout(2, 0);
     client.set_read_timeout(2, 0);
     client.set_follow_location(true);
+    if (https) {
+        WebService::OpenPakApi::ApplySystemCa(client);
+    }
 
     httplib::Headers headers;
     const std::string etag = Platform::ReadFile(EtagPath());
