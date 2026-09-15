@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // The network profile, implemented against the contract in network_profile.h
-// (prds/emulator-network-profile-prd.md §2 and §3). One conditional GET, two seconds, no
+// (emulators/prds/emulator-network-profile-prd.md §2 and §3). One conditional GET, two seconds, no
 // retries; the compiled-in allowlist is the ceiling; last-known-good beats a fetch and the
 // built-in default beats nothing.
 #include "openpak/network_profile.h"

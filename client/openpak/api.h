@@ -211,7 +211,7 @@ std::string PushSave(const std::string& title_id_hex, std::span<const u8> data);
 #endif
 
 // Which platform segment the saves API paths use (default "citron"; the Wii and DS emulators
-// pass "wii" and "ds" — prds/emulator-integration-prd.md S-1) and what name uploads report as
+// pass "wii" and "ds" — emulators/prds/emulator-integration-prd.md S-1) and what name uploads report as
 // the machine that made them (default: the platform).
 void SetSavesPlatform(const std::string& platform);
 void SetSaveDevice(const std::string& device);

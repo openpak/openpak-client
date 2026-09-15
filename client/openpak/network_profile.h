@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // The network profile: what OpenPak is and what a client should send it, fetched once per
-// launch instead of compiled into six emulators (prds/emulator-network-profile-prd.md).
+// launch instead of compiled into six emulators (emulators/prds/emulator-network-profile-prd.md).
 //
 // The contract, in one breath: one conditional GET, two seconds, never in a game's way. A
 // fetched profile is validated against the compiled-in allowlist — the ceiling — before
