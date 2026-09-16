@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "openpak/qt/restore_swap.h"
 #include "openpak/qt/safe_entry_path.h"
 #include "openpak/qt/save_sync.h"
 #include "openpak/platform.h"
@@ -41,38 +42,6 @@ namespace {
 // Only ever called from the real-backend paths below (libarchive, or the Windows PowerShell
 // fallback) -- kept inside this guard so an unused-function error doesn't fire on builds with
 // neither (e.g. a non-Windows build without libarchive).
-// A restore replaces a player's progress. Extract beside the save directory and swap it in
-// once, so a failure halfway through leaves the old save whole instead of half of each.
-std::filesystem::path StagingPathFor(const std::filesystem::path& dest) {
-    return dest.parent_path() / (dest.filename().string() + ".openpak-new");
-}
-
-bool SwapIntoPlace(const std::filesystem::path& staged, const std::filesystem::path& dest) {
-    std::error_code ec;
-    const std::filesystem::path previous =
-        dest.parent_path() / (dest.filename().string() + ".openpak-old");
-    std::filesystem::remove_all(previous, ec);
-    if (std::filesystem::exists(dest)) {
-        std::filesystem::rename(dest, previous, ec);
-        if (ec) {
-            std::filesystem::remove_all(staged, ec);
-            return false;
-        }
-    }
-    std::filesystem::rename(staged, dest, ec);
-    if (ec) {
-        // A failed restore must not also be a deletion: put the old save back.
-        std::error_code back;
-        if (std::filesystem::exists(previous)) {
-            std::filesystem::rename(previous, dest, back);
-        }
-        std::filesystem::remove_all(staged, ec);
-        return false;
-    }
-    std::filesystem::remove_all(previous, ec);
-    return true;
-}
-
 bool IsEligible(u64 title_id) {
     return OpenPak::CompatibleTitles::Table().count(title_id) != 0 &&
           Common::OpenPakAccount::IsLinked();
@@ -346,6 +315,9 @@ void Pull(const std::filesystem::path& save_dir, u64 title_id, bool force) {
 #endif
     if (applied) {
         OPENPAK_LOG_INFO("OpenPak save pull {:016X}: applied ({} B)", title_id, zip->size());
+    } else {
+        OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: archive refused -> local save kept",
+                            title_id);
     }
 #else
     (void)title_id;

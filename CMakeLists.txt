@@ -51,18 +51,23 @@ if(OPENPAK_BUILD_QT)
   add_library(openpak::qt ALIAS openpak_qt)
   target_include_directories(openpak_qt PUBLIC qt)
   target_link_libraries(openpak_qt PUBLIC openpak::client Qt6::Widgets Qt6::Network)
-  # The archive-entry path guard is pure and has no Qt in it, so its check builds without Qt
-  # or libarchive: ctest --test-dir <build>, or just run the binary.
-  if(BUILD_TESTING)
-    enable_testing()
-    add_executable(openpak_safe_entry_path_test tests/safe_entry_path_test.cpp)
-    target_include_directories(openpak_safe_entry_path_test PRIVATE qt)
-    add_test(NAME safe_entry_path COMMAND openpak_safe_entry_path_test)
-  endif()
   if(LibArchive_FOUND)
     target_link_libraries(openpak_qt PUBLIC LibArchive::LibArchive)
     target_compile_definitions(openpak_qt PRIVATE OPENPAK_HAVE_LIBARCHIVE)
   else()
     message(STATUS "openpak: libarchive not found; cloud-save zipping only on Windows (PowerShell)")
   endif()
+endif()
+
+# The save-restore guards -- the archive-entry path check and the swap that keeps a failed
+# restore from eating the old save -- are pure headers with no Qt and no libarchive in them.
+# Their checks build on any target, so a build without Qt still runs them: ctest --test-dir
+# <build>, or just run the binaries.
+if(BUILD_TESTING)
+  enable_testing()
+  foreach(check safe_entry_path restore_swap)
+    add_executable(openpak_${check}_test tests/${check}_test.cpp)
+    target_include_directories(openpak_${check}_test PRIVATE qt)
+    add_test(NAME ${check} COMMAND openpak_${check}_test)
+  endforeach()
 endif()
