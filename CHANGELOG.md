@@ -5,6 +5,8 @@ of truth; this file is the readable summary.
 
 ## History — no releases tagged yet
 
+- save restore: the swap that keeps a failed restore has a check behind it, and both save-restore checks run without a Qt build [09acc93]
+- save restore: judge the archive before writing it, and swap it in whole [61bddfd]
 - README: bearer-only accounts, network profile, ZipStore, saves platform setter [e75eb13]
 - Actually define SourceName (third time is the definition) [b815e04]
 - Define SourceName (declared in the header, never defined) [0f8747d]
