@@ -15,6 +15,9 @@ std::filesystem::path CacheDir();
 bool CreateParentDirs(const std::filesystem::path& path);
 bool WriteFile(const std::filesystem::path& path, const std::string& contents);
 std::string ReadFile(const std::filesystem::path& path);
+// Where a path that came off the network lands under root, or empty when it would land anywhere
+// else (absolute, or climbing out with "..").
+std::filesystem::path ContainedPath(const std::filesystem::path& root, const std::string& relative);
 void SplitString(const std::string& str, char delim, std::vector<std::string>& out);
 std::string ToLower(std::string s);
 std::string ToUpper(std::string s);

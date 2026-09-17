@@ -236,6 +236,71 @@ struct HistoryList {
 
 HistoryList GetHistory();
 
+// An invitation the core arranged (GET /api/v1/me/invitations). Distinct from the native inbox in
+// openpak::client::session, which holds the ones a console sent and the core never sees.
+struct CoreInvitation {
+    std::string id;
+    std::string from;
+    std::string title_id;
+    std::string expires_at; // RFC3339 UTC, may be empty
+};
+
+std::vector<CoreInvitation> GetInvitations();
+
+// Returns an empty string on success, else a message fit to show the user.
+std::string DeclineInvitation(const std::string& invitation_id);
+
+// One published mod for a title.
+struct Mod {
+    std::string id;
+    std::string slug;
+    std::string name;
+    std::string version;
+    std::string author;
+    std::string licence;
+    std::string summary;
+    std::string sha256;
+    std::string package_url;
+};
+
+// Public. title_id_hex is 16 hex digits, either case.
+std::vector<Mod> GetMods(const std::string& title_id_hex);
+
+// The signed-in account's favourite mod ids. Empty when signed out.
+std::vector<std::string> GetFavouriteModIds();
+bool SetModFavourite(const std::string& mod_id, bool favourite);
+
+// The mod's zip, verified against the sha256 the catalogue published. nullopt on a failed
+// download or a hash mismatch -- the bytes came off the network and are refused either way.
+std::optional<std::vector<u8>> DownloadModPackage(const Mod& mod);
+
+// One file in a title's current news (BCAT) dataset.
+struct NewsFile {
+    std::string path;
+    u64 size = 0;
+    std::string url;
+};
+
+struct NewsManifest {
+    bool ok = false;
+    std::string valid_from; // RFC3339 UTC
+    std::vector<NewsFile> files;
+};
+
+// Public. What a title would receive over BCAT right now.
+NewsManifest GetNewsManifest(const std::string& title_id_hex);
+std::optional<std::vector<u8>> DownloadNewsFile(const NewsFile& file);
+
+// The public status page's numbers. ok is false when the site could not be reached.
+struct NetworkStatus {
+    bool ok = false;
+    int players_online = 0;
+    std::vector<std::pair<std::string, int>> titles;   // title id -> players
+    std::vector<std::pair<std::string, int>> networks; // namespace -> players
+};
+
+NetworkStatus GetStatus();
+
 // Round-trip time to the backend's /api/health in milliseconds, or nullopt on failure.
 std::optional<int> PingBackend();
 

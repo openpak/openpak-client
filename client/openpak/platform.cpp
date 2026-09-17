@@ -44,4 +44,12 @@ std::string StripSpaces(const std::string& s) {
     const auto b = s.find_first_not_of(" \t\r\n"); if (b == std::string::npos) return {};
     const auto e = s.find_last_not_of(" \t\r\n"); return s.substr(b, e - b + 1);
 }
+std::filesystem::path ContainedPath(const std::filesystem::path& root, const std::string& relative) {
+    const std::filesystem::path normal = std::filesystem::path{relative}.lexically_normal();
+    if (normal.empty() || normal.is_absolute() || normal.has_root_name() ||
+        *normal.begin() == ".." || *normal.begin() == ".") {
+        return {};
+    }
+    return root / normal;
+}
 } // namespace openpak::Platform

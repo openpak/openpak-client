@@ -75,6 +75,9 @@ struct PendingInvitation {
 // across a poll that lands before that happens.
 void SetPendingInvitations(std::vector<PendingInvitation> invitations);
 
+// What is queued for the guest and not yet delivered, for a page that lists it. Consumes nothing.
+std::vector<PendingInvitation> PeekPendingInvitations();
+
 // Pops (removes and returns) the oldest queued invitation, or nullopt if none are waiting --
 // matches TryPopFromFriendInvitationStorageChannel's own single-item pop semantics.
 std::optional<PendingInvitation> PopPendingInvitation();

@@ -123,6 +123,11 @@ void SetInvitationSignalCallback(std::function<void()> callback) {
     g_invitation_signal_callback = std::move(callback);
 }
 
+std::vector<PendingInvitation> PeekPendingInvitations() {
+    std::lock_guard lock{g_invitations_mutex};
+    return g_pending_invitations;
+}
+
 std::optional<PendingInvitation> PopPendingInvitation() {
     std::lock_guard lock{g_invitations_mutex};
     if (g_pending_invitations.empty()) {

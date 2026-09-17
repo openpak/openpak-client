@@ -34,6 +34,7 @@
 #include <fmt/format.h>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+#include <openssl/sha.h>
 #include <openssl/x509_vfy.h>
 
 #ifdef __ANDROID__
@@ -314,6 +315,62 @@ std::string FriendAction(const nlohmann::json& body) {
         return ErrorFrom(result->body, fmt::format("Request failed (HTTP {}).", result->status));
     }
     return {};
+}
+
+// A catalogue url is a path on the site or an absolute https one (a CDN). Public either way: the
+// account token never rides along.
+std::optional<std::vector<u8>> FetchPublic(const std::string& url) {
+    httplib::Result result{nullptr, httplib::Error::Unknown};
+    if (url.starts_with("/")) {
+        result = Send("GET", url, {}, {});
+    } else if (url.starts_with("https://") || url.starts_with(BaseUrl())) {
+        const std::size_t path_at = url.find('/', url.find("://") + 3);
+        httplib::Client client{url.substr(0, path_at)};
+        client.set_connection_timeout(TimeoutSeconds);
+        client.set_read_timeout(TimeoutSeconds);
+        client.set_follow_location(true);
+        ApplyCaCertPath(client);
+        result = client.Get(path_at == std::string::npos ? "/" : url.substr(path_at),
+                            httplib::Headers{{"User-Agent", "citron-openpak"}});
+    }
+    if (!result || result->status != 200) {
+        OPENPAK_LOG_WARNING("Fetch {} failed (HTTP {})", url, result ? result->status : 0);
+        return std::nullopt;
+    }
+    return std::vector<u8>(result->body.begin(), result->body.end());
+}
+
+std::string Sha256Hex(std::span<const u8> data) {
+    std::array<unsigned char, SHA256_DIGEST_LENGTH> digest{};
+    SHA256(data.data(), data.size(), digest.data());
+    std::string out;
+    for (const unsigned char byte : digest) {
+        out += fmt::format("{:02x}", byte);
+    }
+    return out;
+}
+
+// GET a JSON document; nullopt on anything but a parsed 200.
+std::optional<nlohmann::json> GetJson(const std::string& path, const std::string& bearer) {
+    const auto result = Send("GET", path, {}, bearer);
+    if (!bearer.empty() && ClearSessionIfRejected(result)) {
+        return std::nullopt;
+    }
+    if (!result || result->status != 200) {
+        return std::nullopt;
+    }
+    try {
+        return nlohmann::json::parse(result->body);
+    } catch (const nlohmann::json::exception& e) {
+        OPENPAK_LOG_WARNING("Unexpected response from {}: {}", path, e.what());
+        return std::nullopt;
+    }
+}
+
+// The site answers a missing string as null as often as it omits it; value() throws on null.
+std::string Str(const nlohmann::json& json, const char* key) {
+    const auto it = json.find(key);
+    return it != json.end() && it->is_string() ? it->get<std::string>() : std::string{};
 }
 
 // The version each title's save was last pulled at, so a push can say what it was based on.
@@ -750,6 +807,151 @@ std::string ReportPlayer(u64 pid, const std::string& reason, const std::string& 
     (void)reason;
     (void)comment;
     return std::string{NotAvailable};
+}
+
+std::vector<CoreInvitation> GetInvitations() {
+    std::vector<CoreInvitation> out;
+    const std::string bearer = Bearer();
+    if (bearer.empty()) {
+        return out;
+    }
+    const auto json = GetJson("/api/v1/me/invitations", bearer);
+    if (!json || !json->contains("invitations") || !(*json)["invitations"].is_array()) {
+        return out;
+    }
+    for (const auto& item : (*json)["invitations"]) {
+        out.push_back({Str(item, "invitation_id"), Str(item, "from"), Str(item, "title_id"),
+                       Str(item, "expires_at")});
+    }
+    return out;
+}
+
+std::string DeclineInvitation(const std::string& invitation_id) {
+    const std::string bearer = Bearer();
+    if (bearer.empty()) {
+        return "Not signed in.";
+    }
+    const nlohmann::json body{{"invitation_id", invitation_id}};
+    const auto result = Send("POST", "/api/v1/me/invitations/decline", body.dump(), bearer);
+    if (ClearSessionIfRejected(result)) {
+        return std::string{SessionExpired};
+    }
+    if (!result) {
+        return std::string{Unreachable};
+    }
+    if (result->status / 100 != 2) {
+        return ErrorFrom(result->body, fmt::format("Request failed (HTTP {}).", result->status));
+    }
+    return {};
+}
+
+namespace {
+std::vector<Mod> ParseMods(const std::optional<nlohmann::json>& json, const char* key) {
+    std::vector<Mod> out;
+    if (!json || !json->contains(key) || !(*json)[key].is_array()) {
+        return out;
+    }
+    for (const auto& item : (*json)[key]) {
+        out.push_back({Str(item, "id"), Str(item, "slug"), Str(item, "name"), Str(item, "version"),
+                       Str(item, "author"), Str(item, "licence"), Str(item, "summary"),
+                       Str(item, "sha256"), Str(item, "package_url")});
+    }
+    return out;
+}
+} // namespace
+
+std::vector<Mod> GetMods(const std::string& title_id_hex) {
+    return ParseMods(GetJson(fmt::format("/api/v1/titles/{}/mods",
+                                         openpak::Platform::ToLower(title_id_hex)), {}),
+                     "mods");
+}
+
+std::vector<std::string> GetFavouriteModIds() {
+    std::vector<std::string> out;
+    const std::string bearer = Bearer();
+    if (bearer.empty()) {
+        return out;
+    }
+    for (const Mod& mod : ParseMods(GetJson("/api/v1/me/favourites", bearer), "favourites")) {
+        out.push_back(mod.id);
+    }
+    return out;
+}
+
+bool SetModFavourite(const std::string& mod_id, bool favourite) {
+    const std::string bearer = Bearer();
+    // The id goes into a path: the catalogue's ids are tame, anything else is not one of them.
+    if (bearer.empty() || mod_id.empty() ||
+        !std::all_of(mod_id.begin(), mod_id.end(), [](unsigned char c) {
+            return std::isalnum(c) || c == '-' || c == '_';
+        })) {
+        return false;
+    }
+    const auto result =
+        Send(favourite ? "PUT" : "DELETE", "/api/v1/me/favourites/" + mod_id, {}, bearer);
+    return !ClearSessionIfRejected(result) && result && result->status / 100 == 2;
+}
+
+std::optional<std::vector<u8>> DownloadModPackage(const Mod& mod) {
+    auto package = FetchPublic(mod.package_url);
+    if (!package) {
+        return std::nullopt;
+    }
+    const std::string actual = Sha256Hex(*package);
+    if (!mod.sha256.empty() && actual != openpak::Platform::ToLower(mod.sha256)) {
+        OPENPAK_LOG_WARNING("{} did not match its published hash ({} != {}); refusing it",
+                            mod.name, actual, mod.sha256);
+        return std::nullopt;
+    }
+    return package;
+}
+
+NewsManifest GetNewsManifest(const std::string& title_id_hex) {
+    NewsManifest out;
+    const auto json = GetJson(fmt::format("/api/emulator/v1/bcat/titles/{}",
+                                          openpak::Platform::ToLower(title_id_hex)), {});
+    if (!json) {
+        return out;
+    }
+    out.ok = true;
+    out.valid_from = Str(*json, "valid_from");
+    if (json->contains("files") && (*json)["files"].is_array()) {
+        for (const auto& file : (*json)["files"]) {
+            const auto size = file.find("size");
+            out.files.push_back({Str(file, "path"),
+                                 size != file.end() && size->is_number_unsigned() ? size->get<u64>() : 0,
+                                 Str(file, "url")});
+        }
+    }
+    return out;
+}
+
+std::optional<std::vector<u8>> DownloadNewsFile(const NewsFile& file) {
+    return FetchPublic(file.url);
+}
+
+NetworkStatus GetStatus() {
+    NetworkStatus out;
+    const auto json = GetJson("/api/v1/status", {});
+    if (!json) {
+        return out;
+    }
+    out.ok = true;
+    const auto players = json->find("players_online");
+    out.players_online = players != json->end() && players->is_number() ? players->get<int>() : 0;
+    const auto read = [&](const char* list, const char* key, auto& into) {
+        if (!json->contains(list) || !(*json)[list].is_array()) {
+            return;
+        }
+        for (const auto& row : (*json)[list]) {
+            const auto count = row.find("players");
+            into.emplace_back(Str(row, key),
+                              count != row.end() && count->is_number() ? count->get<int>() : 0);
+        }
+    };
+    read("titles", "title_id", out.titles);
+    read("networks", "namespace", out.networks);
+    return out;
 }
 
 std::optional<int> PingBackend() {
