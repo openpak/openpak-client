@@ -3,10 +3,17 @@
 
 #pragma once
 
+#include <QColor>
 #include <QStandardItem>
 #include <QString>
 
 #include "openpak/types.h"
+
+// The account dialog's card look, for the pages that live outside account_dialog.cpp.
+namespace openpak::qt::style {
+QString Card();
+QColor Dim();
+} // namespace openpak::qt::style
 
 class OpenPakFriendItem : public QStandardItem {
 public:

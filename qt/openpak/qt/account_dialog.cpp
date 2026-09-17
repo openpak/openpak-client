@@ -60,6 +60,7 @@
 #include "openpak/qt/account_dialog.h"
 #include "openpak/qt/account_page_p.h"
 #include "openpak/qt/avatar_cache.h"
+#include "openpak/qt/extra_pages.h"
 #include "openpak/compatible_titles.h"
 #include "openpak/qt/host.h"
 #include "openpak/qt/friend_delegate.h"
@@ -643,6 +644,9 @@ private:
 };
 
 } // Anonymous namespace
+
+QString openpak::qt::style::Card() { return DashCardStyle(); }
+QColor openpak::qt::style::Dim() { return DimColor(); }
 
 class OpenPakPageNavArrow : public QWidget {
 public:
@@ -1351,8 +1355,14 @@ OpenPakAccountDialog::OpenPakAccountDialog(openpak::qt::Host* controller_, QWidg
     pages_stack->addWidget(history_stack);
     pages_stack->addWidget(cloud_save_page);
 
+    const openpak::qt::StatusSink say = [this](const QString& message) { status->setText(message); };
+    pages_stack->addWidget(openpak::qt::MakeInvitationsPage(controller, say));
+    pages_stack->addWidget(openpak::qt::MakeModsPage(controller, say));
+    pages_stack->addWidget(openpak::qt::MakeNewsPage(controller, say));
+    pages_stack->addWidget(openpak::qt::MakeStatusPage(controller, say));
+
     page_titles = {tr("Home"), tr("Friends"), tr("Players"), tr("Recently Played"),
-                  tr("Cloud Saves")};
+                  tr("Cloud Saves"), tr("Invitations"), tr("Mods"), tr("News"), tr("Status")};
 
     page_title_label = new QLabel;
     QFont page_title_font = page_title_label->font();

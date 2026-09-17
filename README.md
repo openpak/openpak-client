@@ -10,8 +10,8 @@ PRD: `Openpak/prds/emulator-integration-prd.md`.
   (`Common::OpenPakAccount`), the friend cache and outgoing-request bookkeeping. Needs a
   `Platform` set-up call for its directories and an optional log sink. libcurl-free: cpp-httplib
   over OpenSSL, nlohmann/json, fmt.
-- `qt/` — `openpak::qt`: the account dialog (home, friends, players, history, cloud saves),
-  delegates, avatar cache, toasts, online counts, save sync, network probe, chat client. A host
+- `qt/` — `openpak::qt`: the account dialog (home, friends, players, history, cloud saves,
+  invitations, mods, news, status), the sign-in dialog, delegates, avatar cache, toasts, online counts, save sync, network probe, chat client. A host
   implements one interface, `openpak::qt::Host` (`qt/openpak/qt/host.h`): game names and
   icons, launching, settings, the save directory of a title, gamepad navigation.
 

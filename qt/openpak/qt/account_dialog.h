@@ -46,6 +46,10 @@ public:
     static constexpr int kPlayersPage = 2;
     static constexpr int kHistoryPage = 3;
     static constexpr int kCloudSavesPage = 4;
+    static constexpr int kInvitationsPage = 5;
+    static constexpr int kModsPage = 6;
+    static constexpr int kNewsPage = 7;
+    static constexpr int kStatusPage = 8;
 
     explicit OpenPakAccountDialog(openpak::qt::Host* controller,
                                    QWidget* parent = nullptr, int initial_page = kHomePage);

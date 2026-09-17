@@ -9,6 +9,7 @@
 #include <QString>
 #include <filesystem>
 #include <string>
+#include <vector>
 #include "openpak/types.h"
 #include "openpak/qt/controller_navigation.h"
 class OpenPakChatClient;
@@ -37,6 +38,14 @@ public:
     virtual void QuickStart(u64 title_id) = 0;
     virtual void ManualSaveDownload(u64 title_id) = 0;
     virtual std::filesystem::path SaveDirectory(u64 title_id) = 0;
+    // Defaulted so a host that predates the mods and news pages still builds: no library means
+    // the pages offer the running title only, and no mod directory means Install is refused.
+    struct Title {
+        u64 id = 0;
+        QString name;
+    };
+    virtual std::vector<Title> InstalledTitles() const { return {}; }
+    virtual std::filesystem::path ModDirectory(u64 /*title_id*/) { return {}; }
 
     // settings the dialogs read and write
     virtual QString AccentColor() const = 0;
