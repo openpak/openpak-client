@@ -42,7 +42,7 @@ namespace {
 // Every title with a signed-in account, as Ryujinx does: the old compatibility table only pins
 // the versions a title's online play needs, and says nothing about whether its save may sync.
 bool IsEligible(u64 /*title_id*/) {
-    return Common::OpenPakAccount::IsLinked();
+    return Common::OpenPakAccount::HasBearer();
 }
 
 bool HasLocalContent(const std::filesystem::path& dir) {
@@ -436,9 +436,10 @@ bool ApplyCloud(const std::filesystem::path& save_dir, u64 title_id, const std::
 
 } // namespace
 
-PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id) {
+PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id,
+                             const std::function<bool()>& still_wanted) {
 #if defined(ENABLE_WEB_SERVICE)
-    if (save_dir.empty() || !Common::OpenPakAccount::IsLinked()) {
+    if (save_dir.empty() || !Common::OpenPakAccount::HasBearer()) {
         return PullOutcome::Nothing;
     }
     const std::string title = fmt::format("{:016x}", title_id);
@@ -456,10 +457,16 @@ PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id
     if (local && known.empty()) {
         return PullOutcome::BothExist;
     }
+    if (still_wanted && !still_wanted()) {
+        OPENPAK_LOG_INFO("OpenPak save pull {:016X}: the host stopped waiting -> local save kept",
+                         title_id);
+        return PullOutcome::Nothing;
+    }
     return ApplyCloud(save_dir, title_id, *zip, cloud) ? PullOutcome::Pulled : PullOutcome::Nothing;
 #else
     (void)save_dir;
     (void)title_id;
+    (void)still_wanted;
     return PullOutcome::Nothing;
 #endif
 }
@@ -467,7 +474,7 @@ PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id
 std::vector<u8> CaptureOnExit(const std::filesystem::path& save_dir, u64 title_id) {
     // ponytail: every exit uploads; skipping an unchanged save needs a content hash of the
     // folder, add it if the allowance fills with identical versions (Ryujinx has the same note).
-    if (save_dir.empty() || !Common::OpenPakAccount::IsLinked() || !HasLocalContent(save_dir)) {
+    if (save_dir.empty() || !Common::OpenPakAccount::HasBearer() || !HasLocalContent(save_dir)) {
         return {};
     }
     return ZipSave(save_dir, title_id);

@@ -27,11 +27,16 @@
 #include <QLocale>
 #include <QPushButton>
 #include <QSignalBlocker>
+#ifndef OPENPAK_QT_NO_NETWORK
 #include <QTcpSocket>
+#endif
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <fmt/format.h>
+#ifdef OPENPAK_QT_NO_NETWORK
+#include <httplib.h>
+#endif
 
 #ifdef OPENPAK_HAVE_LIBARCHIVE
 #include <archive.h>
@@ -47,6 +52,7 @@
 #include "openpak/qt/account_page_p.h"
 #include "openpak/qt/host.h"
 #include "openpak/qt/pages_p.h"
+#include "openpak/qt/prompts.h"
 #include "openpak/qt/save_sync.h"
 #include "openpak/session.h"
 
@@ -240,6 +246,9 @@ std::string ModDirName(const Api::Mod& mod) {
 } // namespace
 
 Page* MakeInvitationsPage(const PageContext& context) {
+    if (IsWfc(context.host->GetFamily())) {
+        return NotHerePage(Tr("Wii and DS games invite through their own friend codes, inside the game."));
+    }
     struct Waiting {
         std::vector<Api::CoreInvitation> core;
         std::vector<client::session::Invitation> native;
@@ -424,19 +433,21 @@ Page* MakeSavesPage(const PageContext& context) {
             page->reload(true);
         };
     };
+    Host* const host = context.host;
     const auto upload_title = [=](u64 id, const QString& name) {
-        const auto dir = context.host->SaveDirectory(id);
+        const auto dir = host->SaveDirectory(id);
         const auto it = newest->find(Hex(id));
         const int base = it == newest->end() ? 0 : it->second;
-        context.queue->Run(page, [dir, id, base] { return OpenPak::SaveSync::Upload(dir, id, base); },
+        context.queue->Run(page, [host, dir, id, base] { return host->UploadSave(dir, id, base); },
                            after(Tr("Uploaded the save for %1.").arg(name)));
     };
 
     const auto add = [=](const Row& row) {
         const Api::CloudSave& save = row.save;
-        const u64 id = IdOf(save.title_id);
-        QString name = GameName(context.host, save.title_id);
-        if (name.isEmpty() && !save.name.empty() && IdOf(save.name) != id) {
+        const u64 id = host->CloudSaveTitle(save.title_id);
+        QString name = GameName(context.host, id != 0 ? Hex(id) : save.title_id);
+        if (name.isEmpty() && !save.name.empty() && save.name != save.title_id &&
+            IdOf(save.name) != id) {
             name = QString::fromStdString(save.name); // the site's, when it is not the id
         }
         if (name.isEmpty()) {
@@ -502,12 +513,43 @@ Page* MakeSavesPage(const PageContext& context) {
         }
 
         // A save with no shared history, or one the server marked, is a choice between the two
-        // copies; the buttons say which way each one goes.
+        // copies, made in the conflict dialog (UX spec §3.9).
         const bool choose = conflict || local.state == LocalState::NoHistory;
         const std::string running = openpak::Platform::ToLower(context.host->GetLocalAppId());
+        const bool this_running = !running.empty() && running == Hex(id);
+        const auto download_now = [=, dir = row.dir] {
+            context.queue->Run(page, [host, dir, id] { return host->DownloadSave(dir, id); },
+                               after(Tr("Downloaded the cloud save for %1.").arg(name)));
+        };
         std::vector<QWidget*> buttons;
-        if (row.installed) {
-            QPushButton* download = TextButton(choose ? Tr("Take cloud") : Tr("Download"));
+        if (row.installed && choose) {
+            QPushButton* resolve = TextButton(Tr("Resolve..."));
+            const Api::SaveVersionInfo top = save.versions.empty() ? Api::SaveVersionInfo{}
+                                                                   : save.versions.front();
+            QObject::connect(resolve, &QPushButton::clicked, page, [=] {
+                ConflictSides sides;
+                sides.game = name;
+                sides.local_written = local.last_written;
+                sides.cloud_version = top.number;
+                sides.cloud_device = QString::fromStdString(top.device);
+                sides.cloud_saved = QDateTime::fromString(QString::fromStdString(top.saved_at),
+                                                          Qt::ISODate)
+                                        .toSecsSinceEpoch();
+                sides.game_running = this_running;
+                switch (ChooseSave(page, sides)) {
+                case SaveChoice::KeepLocal:
+                    upload_title(id, name);
+                    break;
+                case SaveChoice::TakeCloud:
+                    download_now();
+                    break;
+                case SaveChoice::Later:
+                    break;
+                }
+            });
+            buttons = {resolve};
+        } else if (row.installed) {
+            QPushButton* download = TextButton(Tr("Download"));
             // Writing a save folder while a game runs is what breaks the running game's mounted
             // filesystem, so the download waits for it to stop, whichever title it is.
             download->setEnabled(running.empty());
@@ -517,14 +559,13 @@ Page* MakeSavesPage(const PageContext& context) {
                                      Tr("Replace the local save for %1 with the cloud copy? The "
                                         "local one is backed up beside it.")
                                          .arg(name),
-                                     Tr("Replace"))) {
+                                     Tr("Download"))) {
                     return;
                 }
-                context.queue->Run(page, [dir = row.dir, id] { return OpenPak::SaveSync::Download(dir, id); },
-                                   after(Tr("Downloaded the cloud save for %1.").arg(name)));
+                download_now();
             });
-            QPushButton* up = TextButton(choose ? Tr("Keep local") : Tr("Upload"));
-            up->setEnabled(local.state != LocalState::NoLocal && running != save.title_id);
+            QPushButton* up = TextButton(Tr("Upload"));
+            up->setEnabled(local.state != LocalState::NoLocal && !this_running);
             QObject::connect(up, &QPushButton::clicked, page, [=] { upload_title(id, name); });
             buttons = {download, up};
         }
@@ -589,15 +630,21 @@ Page* MakeSavesPage(const PageContext& context) {
             return;
         }
         // Where each installed title keeps its save is the host's to say, on its own thread.
-        std::map<std::string, std::filesystem::path> dirs;
+        std::map<std::string, std::pair<u64, std::filesystem::path>> dirs;
         for (const Host::Title& title : context.host->InstalledTitles()) {
-            dirs[Hex(title.id)] = context.host->SaveDirectory(title.id);
+            dirs[openpak::Platform::ToLower(host->CloudSaveKey(title.id))] = {
+                title.id, context.host->SaveDirectory(title.id)};
         }
         context.queue->Run(
             page,
-            [dirs] {
+            [dirs, host] {
                 compatibility::LoadNames();
                 Loaded loaded{Api::GetCloudSaves(), {}};
+                // This emulator's console only: the account's other consoles' saves are theirs.
+                const std::string platform = Api::SavesPlatform();
+                std::erase_if(loaded.list.saves, [&platform](const Api::CloudSave& save) {
+                    return !save.platform.empty() && save.platform != platform;
+                });
                 std::sort(loaded.list.saves.begin(), loaded.list.saves.end(),
                           [](const Api::CloudSave& a, const Api::CloudSave& b) {
                               return openpak::Platform::ToLower(a.title_id) <
@@ -611,9 +658,9 @@ Page* MakeSavesPage(const PageContext& context) {
                     if (const auto it = dirs.find(openpak::Platform::ToLower(save.title_id));
                         it != dirs.end()) {
                         row.installed = true;
-                        row.dir = it->second;
-                        row.local = OpenPak::SaveSync::Compare(
-                            row.dir, save.versions.empty() ? 0 : save.versions.front().number);
+                        row.dir = it->second.second;
+                        row.local = host->CompareSave(row.dir, it->second.first,
+                                                      save.versions.empty() ? 0 : save.versions.front().number);
                     }
                     loaded.rows.push_back(std::move(row));
                 }
@@ -633,12 +680,14 @@ Page* MakeSavesPage(const PageContext& context) {
                 newest->clear();
                 for (Row& row : loaded.rows) {
                     // A host with no library list still knows its installed titles by icon.
-                    const u64 id = IdOf(row.save.title_id);
+                    const u64 id = host->CloudSaveTitle(row.save.title_id);
                     if (!row.installed && Installed(context.host, id)) {
                         row.installed = true;
                         row.dir = context.host->SaveDirectory(id);
-                        row.local = OpenPak::SaveSync::Compare(
-                            row.dir, row.save.versions.empty() ? 0 : row.save.versions.front().number);
+                        // ponytail: disk I/O on the UI thread, only for a host with no library
+                        // list; move it into the work above if one of those grows a big save.
+                        row.local = host->CompareSave(
+                            row.dir, id, row.save.versions.empty() ? 0 : row.save.versions.front().number);
                     }
                     (*newest)[Hex(id)] = row.save.versions.empty() ? 0 : row.save.versions.front().number;
                     add(row);
@@ -673,6 +722,9 @@ Page* MakeSavesPage(const PageContext& context) {
 }
 
 Page* MakeModsPage(const PageContext& context) {
+    if (context.host->GetFamily() == Family::DS) {
+        return NotHerePage(Tr("OpenPak has no mods catalogue for DS games."));
+    }
     struct Catalogue {
         std::vector<Api::Mod> mods;
         std::vector<std::string> favourites;
@@ -789,6 +841,9 @@ Page* MakeModsPage(const PageContext& context) {
 }
 
 Page* MakeNewsPage(const PageContext& context) {
+    if (IsWfc(context.host->GetFamily())) {
+        return NotHerePage(Tr("Wii and DS games have no news channel."));
+    }
     auto* page = new Page;
     QHBoxLayout* header = nullptr;
     QVBoxLayout* layout = Frame(page, header);
@@ -891,6 +946,7 @@ int ProbeEdge(const std::string& address) {
         host = address.substr(0, colon);
         port = static_cast<quint16>(std::atoi(address.c_str() + colon + 1));
     }
+#ifndef OPENPAK_QT_NO_NETWORK
     QTcpSocket socket;
     QElapsedTimer clock;
     clock.start();
@@ -899,6 +955,18 @@ int ProbeEdge(const std::string& address) {
     const int elapsed = static_cast<int>(clock.elapsed());
     socket.abort();
     return answered ? elapsed : -1;
+#else
+    // No QtNetwork: a plain-HTTP request to the port, where only a failure to connect counts as
+    // not answering (a TLS port answers an HTTP request with an error, after connecting).
+    httplib::Client client(host, port);
+    client.set_connection_timeout(4, 0);
+    client.set_read_timeout(1, 0);
+    QElapsedTimer clock;
+    clock.start();
+    const auto result = client.Head("/");
+    const int elapsed = static_cast<int>(clock.elapsed());
+    return result || result.error() != httplib::Error::Connection ? elapsed : -1;
+#endif
 }
 
 // The state the last presence publish carried: the JSON-Patch body's /presence/state value.

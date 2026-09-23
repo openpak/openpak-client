@@ -66,13 +66,28 @@ if(TARGET ZLIB::ZLIB)
 endif()
 
 if(OPENPAK_BUILD_QT)
-  find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+  find_package(Qt6 REQUIRED COMPONENTS Widgets)
+  # QtNetwork is optional: a host whose Qt has none (Dolphin's bundled Windows Qt) goes without
+  # the chat client, and the Status page times its TCP connect through the client library.
+  find_package(Qt6 QUIET COMPONENTS Network)
   set(CMAKE_AUTOMOC ON)
   file(GLOB QT_SOURCES CONFIGURE_DEPENDS qt/openpak/qt/*.cpp qt/openpak/qt/*.h)
+  if(NOT TARGET Qt6::Network)
+    list(FILTER QT_SOURCES EXCLUDE REGEX "chat_client")
+  endif()
   add_library(openpak_qt STATIC ${QT_SOURCES})
   add_library(openpak::qt ALIAS openpak_qt)
   target_include_directories(openpak_qt PUBLIC qt)
-  target_link_libraries(openpak_qt PUBLIC openpak::client Qt6::Widgets Qt6::Network)
+  target_link_libraries(openpak_qt PUBLIC openpak::client Qt6::Widgets)
+  if(TARGET Qt6::Network)
+    target_link_libraries(openpak_qt PUBLIC Qt6::Network)
+  else()
+    target_compile_definitions(openpak_qt PRIVATE OPENPAK_QT_NO_NETWORK)
+  endif()
+  # The pages throw and catch too (Dolphin builds with -fno-exceptions globally).
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(openpak_qt PRIVATE -fexceptions)
+  endif()
 endif()
 
 # Tests: the client's own (standalone builds) and the save-restore guards, which are pure headers

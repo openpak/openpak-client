@@ -15,6 +15,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QStyle>
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
@@ -432,6 +433,29 @@ void RowList::Clear() {
 
 void RowList::Add(QWidget* row) {
     rows->insertWidget(rows->count() - 1, row);
+}
+
+Page* NotHerePage(const QString& text, const QString& link_text, const QString& url) {
+    auto* page = new Page;
+    auto* layout = new QVBoxLayout(page);
+    layout->addStretch(1);
+    auto* icon = new QLabel;
+    icon->setPixmap(page->style()->standardIcon(QStyle::SP_MessageBoxInformation).pixmap(40, 40));
+    icon->setAlignment(Qt::AlignCenter);
+    layout->addWidget(icon);
+    QLabel* words = DimLabel(text);
+    words->setAlignment(Qt::AlignCenter);
+    words->setWordWrap(true);
+    layout->addWidget(words);
+    if (!link_text.isEmpty() && !url.isEmpty()) {
+        auto* link = new QLabel(QStringLiteral("<a href=\"%1\">%2</a>").arg(url, link_text.toHtmlEscaped()));
+        link->setAlignment(Qt::AlignCenter);
+        link->setOpenExternalLinks(true);
+        layout->addWidget(link);
+    }
+    layout->addStretch(1);
+    page->reload = [](bool) {};
+    return page;
 }
 
 void RowList::AddEmpty(const QString& text) {

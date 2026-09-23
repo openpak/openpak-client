@@ -57,6 +57,7 @@
 #include "openpak/platform.h"
 #include "openpak/account.h"
 #include "openpak/qt/host.h"
+#include "openpak/qt/prompts.h"
 #include "openpak/qt/account_dialog.h"
 #include "openpak/qt/account_page_p.h"
 #include "openpak/qt/avatar_cache.h"
@@ -776,7 +777,9 @@ OpenPakAccountDialog::OpenPakAccountDialog(openpak::qt::Host* controller_, QWidg
     nav_bar->addStretch();
     nav_bar->addWidget(nav_right_arrow);
 
-    auto* ok_button = new QPushButton(tr("OK"));
+    // The window saves nothing, so its one button closes it (UX spec §3.6).
+    auto* ok_button = new QPushButton(tr("Close"));
+    ok_button->setDefault(true);
     ok_button->setCursor(Qt::PointingHandCursor);
     connect(ok_button, &QPushButton::clicked, this, &QDialog::accept);
     auto* status_bar = new QHBoxLayout;
@@ -945,9 +948,21 @@ QWidget* OpenPakAccountDialog::MakeAccountPage() {
     });
     add_detail(tr("Friend code"), account_code, copy_button);
     account_code->setFont(QFont(QStringLiteral("monospace")));
-    add_detail(tr("Switch identity"), account_pid);
+    const openpak::qt::Family family = controller->GetFamily();
+    const bool wfc = openpak::qt::IsWfc(family);
+    const QString console = family == openpak::qt::Family::WiiU   ? tr("Wii U")
+                            : family == openpak::qt::Family::N3DS ? tr("3DS")
+                            : family == openpak::qt::Family::Wii  ? tr("Wii")
+                            : family == openpak::qt::Family::DS   ? tr("DS")
+                                                                  : tr("Switch");
+    add_detail(tr("%1 identity").arg(console), account_pid);
     add_detail(tr("Linked consoles"), account_consoles);
     add_detail(tr("Console link"), account_link);
+    if (wfc) {
+        // WFC minted no console accounts: OpenPak names the player and keeps the saves.
+        details_layout->itemAtPosition(detail_row - 1, 0)->widget()->hide();
+        account_link->hide();
+    }
     add_detail(tr("Players online"), account_players);
 
     account_signed_out = new QLabel(tr("Sign in to OpenPak to use this."));
@@ -974,7 +989,7 @@ QWidget* OpenPakAccountDialog::MakeAccountPage() {
         dash_online_text->setText(tr("Online"));
         dash_online_text->setStyleSheet(QStringLiteral("color: #3fdb76; font-weight: 600;"));
     } else {
-        dash_online_text->setText(tr("Offline: Please enable \"OpenPak Redirection\""));
+        dash_online_text->setText(tr("Offline"));
         dash_online_text->setStyleSheet(QStringLiteral("color: #ff5b56; font-weight: 600;"));
         dash_online_text->setWordWrap(true);
     }
@@ -1153,7 +1168,7 @@ QWidget* OpenPakAccountDialog::MakeAccountPage() {
 
 void OpenPakAccountDialog::RefreshAccount() {
     const bool signed_in = openpak::qt::SignedIn();
-    sign_button->setText(signed_in ? tr("Sign out") : tr("Sign in..."));
+    sign_button->setText(signed_in ? tr("Sign out...") : tr("Sign in..."));
     account_details->setVisible(signed_in);
     account_signed_out->setVisible(!signed_in);
     edit_name_button->setVisible(signed_in);
@@ -1170,7 +1185,11 @@ void OpenPakAccountDialog::RefreshAccount() {
     header_code->setVisible(signed_in && !code.empty());
     account_code->setText(code.empty() ? QStringLiteral("—") : QString::fromStdString(code));
     const u64 pid = Common::OpenPakAccount::GetPid();
-    account_pid->setText(pid != 0 ? tr("PID %1").arg(pid) : QStringLiteral("—"));
+    account_pid->setText(openpak::qt::IsWfc(controller->GetFamily())
+                             ? tr("Wii and DS games have no console account; OpenPak names you "
+                                  "and keeps your saves.")
+                         : pid != 0 ? tr("PID %1").arg(pid)
+                                    : QStringLiteral("—"));
     account_link->setText(openpak::client::session::Linked()
                               ? tr("Linked as %1").arg(QString::fromStdString(
                                     openpak::client::session::Nickname()))
@@ -1223,7 +1242,10 @@ void OpenPakAccountDialog::RefreshAccount() {
 
 void OpenPakAccountDialog::OnSignInOrOut() {
     if (openpak::qt::SignedIn()) {
-        // No confirmation, as in the reference: signing back in is one step away.
+        // Signing out revokes the token; undoing it means the password again (UX spec §3.5).
+        if (!openpak::qt::ConfirmSignOut(this, controller->ProfileName())) {
+            return;
+        }
         controller->SignOut();
         *friends_snapshot = {};
         status->setText(tr("Signed out of OpenPak."));

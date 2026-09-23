@@ -10,16 +10,31 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "openpak/save_sync.h"
 #include "openpak/types.h"
 #include "openpak/qt/controller_navigation.h"
 class OpenPakChatClient;
 namespace openpak::qt {
+// Which console an emulator plays, for what the window's pages can offer it (UX spec §3.6): Wii
+// and DS games speak Nintendo WFC, which has no console account, no invitations and no news.
+enum class Family { Switch, WiiU, N3DS, Wii, DS };
+
+inline bool IsWfc(Family family) {
+    return family == Family::Wii || family == Family::DS;
+}
+
 class Host : public QObject {
     Q_OBJECT
 public:
     using QObject::QObject;
     static Host* Current();
     static void SetCurrent(Host* host);
+
+    // Defaulted so the Switch hosts that predate families still build.
+    virtual Family GetFamily() const { return Family::Switch; }
+    // The local profile the OpenPak account belongs to, for the sign-out confirmation; empty on a
+    // host with one identity.
+    virtual QString ProfileName() const { return {}; }
 
     // account and friends (the host owns the session and the friend cache)
     virtual bool IsLinked() const = 0;
@@ -46,6 +61,19 @@ public:
     };
     virtual std::vector<Title> InstalledTitles() const { return {}; }
     virtual std::filesystem::path ModDirectory(u64 /*title_id*/) { return {}; }
+
+    // Cloud saves. The defaults are SaveSync's: a folder per title (SaveDirectory), keyed in the
+    // cloud by the 16-digit title id. A host whose save is something else -- melonDS keeps one
+    // .sav per ROM, keyed by the cartridge's game code -- answers these instead. SaveDirectory is
+    // still asked on the UI thread and its answer handed back here; the other three run on the
+    // window's work thread, so they must not touch the host's widgets.
+    virtual std::string CloudSaveKey(u64 title_id) const;
+    virtual u64 CloudSaveTitle(const std::string& key) const;
+    virtual OpenPak::SaveSync::LocalCopy CompareSave(const std::filesystem::path& save_dir,
+                                                      u64 title_id, int newest_cloud);
+    virtual std::string DownloadSave(const std::filesystem::path& save_dir, u64 title_id);
+    virtual std::string UploadSave(const std::filesystem::path& save_dir, u64 title_id,
+                                   int newest_cloud);
 
     // settings the dialogs read and write
     virtual QString AccentColor() const = 0;

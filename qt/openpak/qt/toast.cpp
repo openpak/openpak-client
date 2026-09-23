@@ -31,7 +31,7 @@ constexpr int kTopExtra = 10;    // extra drop below kMargin, clear of the toolb
 constexpr int kShadowMargin = 16;
 constexpr int kAvatarSize = 44;
 constexpr int kAccentBarWidth = 4;
-constexpr int kAutoHideMs = 7000;
+constexpr int kAutoHideMs = 6000; // UX spec §3.10
 constexpr int kFadeMs = 250;
 constexpr int kSlideMs = 280;
 constexpr int kSlideDistance = 24; // px the card travels in from the screen edge on Show()
@@ -325,7 +325,10 @@ QColor OpenPakToast::AccentColor() const {
     case Kind::GameInvite:
         return QColor(180, 120, 240); // purple -- incoming request, wants attention
     case Kind::RequestSent:
+    case Kind::Account:
         return QColor(100, 149, 237); // blue -- confirmation of your own action
+    case Kind::Saves:
+        return QColor(232, 131, 62); // amber -- a save moved, or needs a choice
     }
     return QColor(100, 149, 237);
 }
@@ -344,6 +347,10 @@ QString OpenPakToast::CategoryLabel() const {
         return tr("CHAT INVITE");
     case Kind::GameInvite:
         return tr("GAME INVITE");
+    case Kind::Account:
+        return tr("OPENPAK");
+    case Kind::Saves:
+        return tr("CLOUD SAVES");
     }
     return {};
 }

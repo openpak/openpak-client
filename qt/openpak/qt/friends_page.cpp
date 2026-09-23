@@ -92,6 +92,23 @@ Page* MakeFriendsPage(const PageContext& context) {
     header->addWidget(refresh);
     layout->addLayout(header);
 
+    // Wii and DS games keep their own friend codes: OpenPak's list is shown for presence only,
+    // and managed on the website (UX spec §3.6).
+    const bool read_only = IsWfc(context.host->GetFamily());
+    if (read_only) {
+        code->hide();
+        add->hide();
+        auto* note = DimLabel(Tr("These are your OpenPak friends. Wii and DS games keep their own "
+                                 "friend codes."));
+        note->setWordWrap(true);
+        auto* manage = new QLabel(QStringLiteral("<a href=\"%1/friends\">%2</a>")
+                                      .arg(QString::fromStdString(Api::BaseUrl()),
+                                           Tr("Manage friends on openpak.org")));
+        manage->setOpenExternalLinks(true);
+        header->insertWidget(0, note, 1);
+        header->insertWidget(1, manage);
+    }
+
     auto* list = new RowList;
     layout->addWidget(list, 1);
 
@@ -208,6 +225,8 @@ Page* MakeFriendsPage(const PageContext& context) {
         });
         top->addWidget(remove);
         top->addWidget(block);
+        remove->setVisible(!read_only);
+        block->setVisible(!read_only);
         auto* chevron = DimLabel({});
         top->addWidget(chevron);
         card_layout->addLayout(top);
@@ -271,7 +290,7 @@ Page* MakeFriendsPage(const PageContext& context) {
         // and a chat invitation, both keyed by the pid only the adapter's rows carry.
         card->setContextMenuPolicy(Qt::CustomContextMenu);
         QObject::connect(card, &QWidget::customContextMenuRequested, card, [=](const QPoint& at) {
-            if (entry.pid == 0 || !context.host) {
+            if (read_only || entry.pid == 0 || !context.host) {
                 return;
             }
             QMenu menu(card);
@@ -315,7 +334,7 @@ Page* MakeFriendsPage(const PageContext& context) {
                 }
                 const int scrolled = list->verticalScrollBar()->value();
                 list->Clear();
-                if (!fetched.requests.empty()) {
+                if (!read_only && !fetched.requests.empty()) {
                     list->AddHeading(Tr("Requests"));
                     for (const auto& request : fetched.requests) {
                         request_row(request);
@@ -323,7 +342,8 @@ Page* MakeFriendsPage(const PageContext& context) {
                 }
                 list->AddHeading(Tr("Friends"));
                 if (fetched.friends.empty()) {
-                    list->AddEmpty(Tr("No friends yet. Add someone by their friend code."));
+                    list->AddEmpty(read_only ? Tr("No friends yet.")
+                                             : Tr("No friends yet. Add someone by their friend code."));
                 }
                 for (const auto& entry : fetched.friends) {
                     friend_card(entry);

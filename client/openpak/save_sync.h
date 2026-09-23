@@ -3,6 +3,7 @@
 
 #pragma once
 #include <filesystem>
+#include <functional>
 #include <span>
 #include <string>
 
@@ -33,7 +34,10 @@ void UploadCaptured(u64 title_id, std::vector<u8> zip_bytes);
 enum class PullOutcome { Nothing, Pulled, BothExist };
 
 // Blocking, network; call before the title boots. The host shows Pulled and BothExist.
-PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id);
+// still_wanted, when given, is asked once more right before anything is written: a host that
+// stopped waiting (its ceiling passed, or Skip) answers false and the local save is left alone.
+PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id,
+                             const std::function<bool()>& still_wanted = {});
 
 // Local I/O only -- call before the filesystem is torn down. Empty when there is nothing to send.
 std::vector<u8> CaptureOnExit(const std::filesystem::path& save_dir, u64 title_id);

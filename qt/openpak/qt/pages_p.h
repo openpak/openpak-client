@@ -114,6 +114,11 @@ public:
 
 QString Tr(const char* text);
 
+// A page that cannot apply to the host's console family (UX spec §3.6): the reason, centred, with
+// a link under it when there is somewhere to go instead. The page count and order stay the same
+// on every family, so this stands where the page would be.
+Page* NotHerePage(const QString& text, const QString& link_text = {}, const QString& url = {});
+
 // A title's name for people: the local library's, then the site catalogue's; empty when neither
 // knows it. Never the title id. The catalogue's names come from compatibility::LoadNames, which
 // the page's work calls before it names anything.

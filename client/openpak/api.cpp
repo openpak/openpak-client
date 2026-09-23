@@ -572,6 +572,10 @@ void SetSavesPlatform(const std::string& platform) {
     g_saves_platform = platform;
 }
 
+std::string SavesPlatform() {
+    return g_saves_platform;
+}
+
 std::string SaveVersion(const std::string& title_id_hex) {
     std::lock_guard lock{g_save_versions_mutex};
     const auto it = g_save_versions.find(title_id_hex);
