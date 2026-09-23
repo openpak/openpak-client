@@ -431,9 +431,29 @@ bool FetchCA() {
     return true;
 }
 
+namespace {
+std::mutex g_device_name_mutex;
+std::string g_device_name;
+
+// email + password, and the device name the account's device list shows when the host set one.
+nlohmann::json Credentials(const std::string& email, const std::string& password) {
+    nlohmann::json credentials{{"email", email}, {"password", password}};
+    std::lock_guard lock{g_device_name_mutex};
+    if (!g_device_name.empty()) {
+        credentials["device_name"] = g_device_name;
+    }
+    return credentials;
+}
+} // namespace
+
+void SetDeviceName(const std::string& device_name) {
+    std::lock_guard lock{g_device_name_mutex};
+    g_device_name = device_name;
+}
+
 LoginResult SignIn(const std::string& email, const std::string& password) {
     LoginResult out;
-    const nlohmann::json credentials{{"email", email}, {"password", password}};
+    const nlohmann::json credentials = Credentials(email, password);
     const auto minted = Send("POST", "/api/v1/token", credentials.dump(), {});
     if (!minted) {
         out.error = std::string{Unreachable};
@@ -494,7 +514,7 @@ LoginResult SignIn(const std::string& email, const std::string& password) {
 
 LoginResult SignInAccountOnly(const std::string& email, const std::string& password) {
     LoginResult out;
-    const nlohmann::json credentials{{"email", email}, {"password", password}};
+    const nlohmann::json credentials = Credentials(email, password);
     const auto minted = Send("POST", "/api/v1/token", credentials.dump(), {});
     if (!minted) {
         out.error = std::string{Unreachable};

@@ -55,6 +55,10 @@ void ApplySystemCa(httplib::Client& client);
 // the redirected Nintendo names can be verified from the next launch on.
 LoginResult SignIn(const std::string& email, const std::string& password);
 
+// How this machine appears in the account's device list ("Eden on Pixel 8"): sent as device_name
+// with every sign-in from now on. Empty sends none, and the website names the token itself.
+void SetDeviceName(const std::string& device_name);
+
 // Sign-in for families with no console identity of their own (Wii and DS: WFC
 // minted no accounts). Mints the website bearer and nothing else — no /me/<family>
 // fetch, no pid, no token. A host that signs in this way reads Common::OpenPakAccount::
