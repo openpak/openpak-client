@@ -13,21 +13,16 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 
-#include <arpa/inet.h>
 #include <fmt/format.h>
-#include <httplib.h>
-#include <netdb.h>
+#include <httplib.h>  // brings the platform's socket headers (inet_pton) on Windows too
 #include <nlohmann/json.hpp>
 #include <openssl/sha.h>
 
 #include "openpak/api.h"
 #include "openpak/log.h"
 #include "openpak/platform.h"
-
-namespace httplib {
-class Client;  // defined in httplib/httplib.h
-}
 
 namespace openpak::NetworkProfile {
 
@@ -42,35 +37,68 @@ std::filesystem::path StoredEtagPath() {
 }
 
 // One entry sits inside the ceiling when it is a family itself or a name under one, on a
-// label boundary: ".nintendo.net" admits "a.nintendo.net" and not "evila.nintendo.net.evil.example".
+// label boundary: ".nintendo.net" admits "nintendo.net" and "a.nintendo.net", not
+// "evilnintendo.net" or "a.nintendo.net.evil.example". Every family starts with its dot, so
+// ending in it is ending on a label boundary.
 bool UnderFamily(std::string const& name, std::string const& family) {
-    if (name.size() < family.size()) {
-        return false;
+    if (name == family || name == family.substr(1)) {
+        return true;
     }
-    if (name.compare(name.size() - family.size(), family.size(), family) != 0) {
-        return false;
-    }
-    return name.size() == family.size() ||   // the family itself
-           name[name.size() - family.size() - 1] == '.';  // or a label under it
+    return name.size() > family.size() &&
+           name.compare(name.size() - family.size(), family.size(), family) == 0;
+}
+
+bool IsLiteralAddress(std::string const& address) {
+    in_addr v4{};
+    in6_addr v6{};
+    return inet_pton(AF_INET, address.c_str(), &v4) == 1 ||
+           inet_pton(AF_INET6, address.c_str(), &v6) == 1;
 }
 
 bool IsLoopbackOrLinkLocal(std::string const& address) {
-    in_addr v4{};
-    in6_addr v6{};
-    if (inet_pton(AF_INET, address.c_str(), &v4) == 1) {
-        std::uint32_t const ip = ntohl(v4.s_addr);
-        return (ip >> 24) == 127 ||                      // 127.0.0.0/8
-               (ip >> 16) == 0xA9FE ||                   // 169.254.0.0/16
-               (ip >> 24) == 0 || ip == 0xFFFFFFFF;      // this-network and broadcast
+    unsigned char v4[4]{};
+    unsigned char v6[16]{};
+    if (inet_pton(AF_INET, address.c_str(), v4) == 1) {
+        return v4[0] == 127 ||                            // 127.0.0.0/8
+               (v4[0] == 169 && v4[1] == 254) ||          // 169.254.0.0/16
+               v4[0] == 0 ||                              // this-network
+               (v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255);  // broadcast
     }
-    if (inet_pton(AF_INET6, address.c_str(), &v6) == 1) {
-        if (IN6_IS_ADDR_LOOPBACK(&v6) || IN6_IS_ADDR_LINKLOCAL(&v6) || IN6_IS_ADDR_UNSPECIFIED(&v6)) {
+    if (inet_pton(AF_INET6, address.c_str(), v6) == 1) {
+        bool zero_prefix = true;  // :: and ::1 share fifteen zero bytes
+        for (int i = 0; i < 15; ++i) {
+            zero_prefix = zero_prefix && v6[i] == 0;
+        }
+        if (zero_prefix && (v6[15] == 0 || v6[15] == 1)) {
             return true;
         }
-        return v6.s6_addr[0] == 0xFE && (v6.s6_addr[1] & 0xC0) == 0x80;  // fe80::/10 again, explicit
+        return v6[0] == 0xFE && (v6[1] & 0xC0) == 0x80;  // fe80::/10
     }
     return true;  // not an address at all: treat as unusable
 }
+
+std::string Lower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+// A pattern starting with a dot matches every name under it; anything else matches one name.
+// Case-insensitive, as DNS is.
+bool Matches(std::string const& host, std::string const& pattern) {
+    std::string const h = Lower(host);
+    std::string const p = Lower(pattern);
+    if (p.empty()) {
+        return false;
+    }
+    if (p.front() == '.') {
+        return h.size() > p.size() && h.compare(h.size() - p.size(), p.size(), p) == 0;
+    }
+    return h == p;
+}
+
+std::mutex g_applied_mutex;
+std::optional<Result> g_applied;
 
 // A fresh response body and its ETag, saved beside the other OpenPak settings.
 void WriteStored(std::string const& body, std::string const& etag) {
@@ -99,13 +127,18 @@ std::vector<std::string> const& AllowedFamilies() {
     static const std::vector<std::string> families = {
         ".nintendo.net",   ".nintendo.com", ".nintendo.co.jp", ".nintendowifi.net",
         ".nintendo-europe.com", ".gamespy.com", ".openpak.org",
+        // Third-party services OpenPak serves in place of their retail ones: a title that
+        // matchmakes outside Nintendo's own names can only be redirected if its family is one
+        // this build is willing to be told about.
+        ".among.us", ".photonengine.io",
     };
     return families;
 }
 
 bool NameAllowed(std::string const& host) {
+    std::string const lowered = Lower(host);
     for (auto const& family : AllowedFamilies()) {
-        if (UnderFamily(host, family)) {
+        if (UnderFamily(lowered, family)) {
             return true;
         }
     }
@@ -144,6 +177,13 @@ std::optional<Profile> Parse(std::string const& json, std::string& error) {
             for (auto const& s : redirect.value("never", std::vector<std::string>{})) {
                 p.never.push_back(s);
             }
+            if (redirect.contains("overrides") && redirect.at("overrides").is_object()) {
+                for (auto const& [name, address] : redirect.at("overrides").items()) {
+                    if (address.is_string()) {
+                        p.overrides.emplace_back(name, address.get<std::string>());
+                    }
+                }
+            }
         }
         if (doc.contains("services") && doc.at("services").is_array()) {
             for (auto const& s : doc.at("services")) {
@@ -165,11 +205,7 @@ std::optional<std::string> Validate(Profile const& profile, std::string const& e
         return fmt::format("profile is for platform {}, not {}", profile.platform,
                            expected_platform);
     }
-    in_addr v4{};
-    in6_addr v6{};
-    bool const is_ip = inet_pton(AF_INET, profile.server_address.c_str(), &v4) == 1 ||
-                       inet_pton(AF_INET6, profile.server_address.c_str(), &v6) == 1;
-    if (!is_ip) {
+    if (!IsLiteralAddress(profile.server_address)) {
         return "server.address is not a literal IP address";
     }
     if (IsLoopbackOrLinkLocal(profile.server_address)) {
@@ -183,6 +219,14 @@ std::optional<std::string> Validate(Profile const& profile, std::string const& e
     for (auto const& name : profile.exact) {
         if (!NameAllowed(name)) {
             return fmt::format("exact name {} is outside the compiled-in families", name);
+        }
+    }
+    for (auto const& [name, address] : profile.overrides) {
+        if (!NameAllowed(name)) {
+            return fmt::format("override {} is outside the compiled-in families", name);
+        }
+        if (!IsLiteralAddress(address) || IsLoopbackOrLinkLocal(address)) {
+            return fmt::format("override {} does not name a usable literal address", name);
         }
     }
     return std::nullopt;  // valid
@@ -201,6 +245,12 @@ Profile BuiltIn(std::string const& platform) {
     Profile p;
     p.platform = platform;
     p.server_address.clear();  // the host keeps its own compiled-in address
+    if (platform == "switch") {
+        // What a Switch reaches, exactly as the Ryujinx build carries it.
+        p.suffixes = {".nintendo.net", ".nintendo.com", ".nintendo.co.jp", ".nintendowifi.net",
+                      ".nintendo-europe.com"};
+        return p;
+    }
     // What the Wii and DS families redirect today; the profile's job is to keep this fresh,
     // not to define it. Hosts with their own lists keep theirs as the fallback.
     p.suffixes = {".nintendowifi.net", ".gamespy.com", ".nintendo.net", ".openpak.org"};
@@ -247,6 +297,13 @@ bool Store(std::string const& platform, Profile const& profile, std::string cons
         doc["redirect"] = {{"suffixes", profile.suffixes},
                            {"exact", profile.exact},
                            {"never", profile.never}};
+        if (!profile.overrides.empty()) {
+            nlohmann::json overrides = nlohmann::json::object();
+            for (auto const& [name, address] : profile.overrides) {
+                overrides[name] = address;
+            }
+            doc["redirect"]["overrides"] = std::move(overrides);
+        }
         doc["services"] = nlohmann::json::array();
         for (auto const& s : profile.services) {
             doc["services"].push_back({{"id", s.id}, {"url", s.url}});
@@ -369,6 +426,7 @@ Result Fetch(std::string const& platform) {
         fmt::format("/api/v1/network/profile?platform={}", platform), headers);
 
     Result out = Finish(platform, result ? &*result : nullptr, etag);
+    Apply(out);
     OPENPAK_LOG_INFO("network profile: platform {} -> {} source, version {}", platform,
                      SourceName(out.source), out.profile.version);
     return out;
@@ -381,7 +439,57 @@ Result Refresh(std::string const& platform) {
     WebService::OpenPakApi::ApplySystemCa(client);
     auto const result =
         client.Get(fmt::format("/api/v1/network/profile?platform={}", platform));
-    return Finish(platform, result ? &*result : nullptr, ReadStoredEtag());
+    Result out = Finish(platform, result ? &*result : nullptr, ReadStoredEtag());
+    Apply(out);
+    OPENPAK_LOG_INFO("network profile: refreshed platform {} -> {} source, version {}", platform,
+                     SourceName(out.source), out.profile.version);
+    return out;
+}
+
+void Apply(Result const& applied) {
+    std::lock_guard lock{g_applied_mutex};
+    g_applied = applied;
+}
+
+bool Loaded() {
+    std::lock_guard lock{g_applied_mutex};
+    return g_applied && g_applied->source != Source::BuiltIn;
+}
+
+std::optional<std::string> RedirectFor(std::string const& host,
+                                       std::string const& server_address) {
+    std::lock_guard lock{g_applied_mutex};
+    if (!g_applied) {
+        return std::nullopt;
+    }
+    Profile const& profile = g_applied->profile;
+
+    // Names that must reach the real internet win over every wildcard below them: the
+    // console's own connection test is the example, and pointing it at OpenPak measures OpenPak.
+    for (auto const& never : profile.never) {
+        if (Matches(host, never)) {
+            return std::nullopt;
+        }
+    }
+    // An address of its own, before the wildcards collapse it onto the server.
+    for (auto const& [name, address] : profile.overrides) {
+        if (Matches(host, name)) {
+            return address;
+        }
+    }
+    std::string const& server =
+        profile.server_address.empty() ? server_address : profile.server_address;
+    for (auto const& exact : profile.exact) {
+        if (Matches(host, exact)) {
+            return server;
+        }
+    }
+    for (auto const& suffix : profile.suffixes) {
+        if (Matches(host, suffix)) {
+            return server;
+        }
+    }
+    return std::nullopt;
 }
 
 }  // namespace openpak::NetworkProfile

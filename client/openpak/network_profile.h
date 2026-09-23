@@ -14,30 +14,7 @@
 
 #include <optional>
 #include <string>
-
-namespace openpak::client::profile {
-
-/// Fetch the profile for this platform and keep it on disk. Best effort, never blocks a launch.
-bool Refresh(const std::string& website_url, const std::string& platform);
-
-/// Load whatever was stored, so a launch without network still redirects.
-void Load();
-
-/// Where `host` should resolve, or nothing when it must be left alone. `server_address` is what
-/// the wildcards resolve to when the profile itself names no server.
-std::optional<std::string> RedirectFor(const std::string& host, const std::string& server_address);
-
-/// True when a profile (stored or fetched) is in hand rather than the built-in list.
-bool Loaded();
-
-} // namespace openpak::client::profile
-
-// ponytail: two profile clients side by side -- the one above (Eden's redirect lookup) and the
-// PRD one below (validated against a compiled-in ceiling, Dolphin/melonDS). Move Eden onto
-// NetworkProfile and delete the one above when Eden next builds.
-
-#include <optional>
-#include <string>
+#include <utility>
 #include <vector>
 
 namespace openpak::NetworkProfile {
@@ -63,6 +40,8 @@ struct Profile {
     std::vector<std::string> suffixes;  // ".nintendo.net" — every name under the family
     std::vector<std::string> exact;     // "gamesync.npln.nintendo.net" — one name
     std::vector<std::string> never;     // names that must reach the real internet
+    // A name with an address of its own, ahead of the wildcards: (name, literal address).
+    std::vector<std::pair<std::string, std::string>> overrides;
 
     std::vector<Service> services;
     long long recheck_after = 21600;    // seconds; a hint, not a contract
@@ -120,6 +99,20 @@ std::optional<std::string> Validate(Profile const& profile, std::string const& e
 // want to show what is in effect without fetching.
 std::optional<Profile> LoadStored(std::string const& platform);
 bool Store(std::string const& platform, Profile const& profile, std::string const& etag);
+
+// The profile this process redirects with. Fetch and Refresh apply what they return; Apply
+// is for a host that got its profile some other way. Thread-safe: DNS lookups read it while a
+// refresh replaces it.
+void Apply(Result const& applied);
+
+// Where `host` should resolve under the applied profile, or nothing when the name is not
+// OpenPak's to answer. `never` wins over everything, then `overrides`, then exact names, then
+// suffixes. The profile's own server address wins over `server_address`, which is what a
+// profile without one (the built-in list) resolves to. Nothing is applied yet: nothing matches.
+std::optional<std::string> RedirectFor(std::string const& host, std::string const& server_address);
+
+// True when a stored or fetched profile is applied, rather than the built-in list or nothing.
+bool Loaded();
 
 // Downloads profile.ca_url over public TLS and keeps it only when the SHA-256 matches
 // ca_sha256, written where the SSL service and the redirected names expect it
