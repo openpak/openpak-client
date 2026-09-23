@@ -1109,17 +1109,20 @@ QWidget* OpenPakAccountDialog::MakeAccountPage() {
                     break;
                 case ExternalReferenceProbe::NatStatus::Open:
                     nat_checking = false;
-                    nat_label->setText(tr("Open"));
+                    nat_label->setText(tr("Type %1").arg(network_probe->LastType()));
+                    nat_label->setToolTip(network_probe->LastDetail());
                     nat_label->setStyleSheet(pill("50,195,85", "#32c355"));
                     break;
                 case ExternalReferenceProbe::NatStatus::Strict:
                     nat_checking = false;
-                    nat_label->setText(tr("Strict"));
+                    nat_label->setText(tr("Type %1").arg(network_probe->LastType()));
+                    nat_label->setToolTip(network_probe->LastDetail());
                     nat_label->setStyleSheet(pill("232,131,62", "#e8833e"));
                     break;
                 case ExternalReferenceProbe::NatStatus::Unknown:
                     nat_checking = false;
-                    nat_label->setText(tr("Unknown"));
+                    nat_label->setText(tr("Type F"));
+                    nat_label->setToolTip(network_probe->LastDetail());
                     nat_label->setStyleSheet(pill("224,57,62", "#e0393e"));
                     break;
                 }

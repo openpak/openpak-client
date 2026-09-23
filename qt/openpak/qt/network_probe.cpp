@@ -3,14 +3,14 @@
 
 #include "openpak/qt/network_probe.h"
 
-#include <algorithm>
-#include <array>
 #include <cstdlib>
+#include <optional>
 #include <thread>
 
-#include <QNetworkDatagram>
-#include <QTimer>
-#include <QUdpSocket>
+#include <QApplication>
+#include <QPointer>
+
+#include "openpak/nat_check.h"
 
 #include "openpak/qt/host.h"
 
@@ -19,20 +19,17 @@
 #endif
 
 namespace {
-constexpr int kNatProbeTimeoutMs = 3000;
-constexpr quint32 kNatTestId = 101;
-constexpr std::array<quint16, 2> kNatPorts{10025, 10125};
 
-// Same fallback chain sfdnsres.cpp uses for the in-game DNS redirect: the two nncs responders
-// share the account/game server's IP by default, with their own env var to split them off.
-QString GetConfiguredHost(const std::string& setting, const char* env_var) {
+// The redirect's own fallback chain: the host's server address, with the second responder's
+// own env var for a deployment whose network profile does not name it.
+std::string GetConfiguredHost(const std::string& setting, const char* env_var) {
     if (!setting.empty()) {
-        return QString::fromStdString(setting);
+        return setting;
     }
     if (const char* env = std::getenv(env_var); env && *env) {
-        return QString::fromLatin1(env);
+        return env;
     }
-    return QStringLiteral("127.0.0.1");
+    return {};
 }
 } // namespace
 
@@ -41,96 +38,50 @@ ExternalReferenceProbe::ExternalReferenceProbe(QObject* parent) : QObject(parent
 ExternalReferenceProbe::~ExternalReferenceProbe() = default;
 
 void ExternalReferenceProbe::ProbeNat() {
-    nat_resolved = false;
-    emit NatStatusChanged(NatStatus::Checking);
-
-    delete nat_socket;
-    nat_socket = new QUdpSocket(this);
-    nat_socket->bind(QHostAddress::AnyIPv4, 0);
-    connect(nat_socket, &QUdpSocket::readyRead, this, &ExternalReferenceProbe::OnNatReadyRead);
-
-    const QHostAddress host1(
-        GetConfiguredHost(openpak::qt::Host::Current()->ServerIp(), "OPENPAK_SERVER_IP"));
-    const QHostAddress host2(
-        GetConfiguredHost(openpak::qt::Host::Current()->NatIp(), "OPENPAK_NAT_IP"));
-
-    nat_targets.clear();
-    nat_external_ports.clear();
-    for (const QHostAddress& host : {host1, host2}) {
-        for (quint16 port : kNatPorts) {
-            nat_targets.push_back(NatTarget{host, port, false});
-        }
-    }
-
-    QByteArray probe(16, '\0');
-    probe[3] = static_cast<char>(kNatTestId); // big-endian test id at offset 0
-    for (const NatTarget& target : nat_targets) {
-        nat_socket->writeDatagram(probe, target.host, target.port);
-    }
-
-    delete nat_timeout;
-    nat_timeout = new QTimer(this);
-    nat_timeout->setSingleShot(true);
-    connect(nat_timeout, &QTimer::timeout, this, [this] {
-        const auto answered = std::count_if(nat_targets.begin(), nat_targets.end(),
-                                            [](const NatTarget& t) { return t.answered; });
-        // At least two distinct destinations have to answer to compare mapping at all.
-        if (answered < 2) {
-            Finish(NatStatus::Unknown);
-        } else {
-            Finish(nat_external_ports.size() == 1 ? NatStatus::Open : NatStatus::Strict);
-        }
-    });
-    nat_timeout->start(kNatProbeTimeoutMs);
-}
-
-void ExternalReferenceProbe::OnNatReadyRead() {
-    while (nat_socket && nat_socket->hasPendingDatagrams()) {
-        const QNetworkDatagram datagram = nat_socket->receiveDatagram();
-        if (nat_resolved || !datagram.isValid()) {
-            continue;
-        }
-        const QByteArray data = datagram.data();
-        if (data.size() < 16) {
-            continue;
-        }
-        const auto read_u32_be = [&data](int offset) {
-            return (static_cast<quint32>(static_cast<quint8>(data[offset])) << 24) |
-                  (static_cast<quint32>(static_cast<quint8>(data[offset + 1])) << 16) |
-                  (static_cast<quint32>(static_cast<quint8>(data[offset + 2])) << 8) |
-                  static_cast<quint32>(static_cast<quint8>(data[offset + 3]));
-        };
-        if (read_u32_be(0) != kNatTestId) {
-            continue;
-        }
-
-        // Only a reply from a target we actually probed counts, and only once per target --
-        // otherwise a stray or duplicate datagram could skew the mapping comparison.
-        for (NatTarget& target : nat_targets) {
-            if (target.answered || target.host != datagram.senderAddress() ||
-                target.port != datagram.senderPort()) {
-                continue;
-            }
-            target.answered = true;
-            nat_external_ports.insert(read_u32_be(4));
-            break;
-        }
-    }
-}
-
-void ExternalReferenceProbe::Finish(NatStatus status) {
-    if (nat_resolved) {
+    if (nat_running) {
         return;
     }
-    nat_resolved = true;
-    if (nat_timeout) {
-        nat_timeout->stop();
+    nat_running = true;
+    emit NatStatusChanged(NatStatus::Checking);
+
+    const std::string server =
+        GetConfiguredHost(openpak::qt::Host::Current()->ServerIp(), "OPENPAK_SERVER_IP");
+    std::optional<std::pair<std::string, std::string>> targets = openpak::nat::Targets(server);
+    if (!targets) {
+        const std::string second =
+            GetConfiguredHost(openpak::qt::Host::Current()->NatIp(), "OPENPAK_NAT_IP");
+        if (!server.empty() && !second.empty() && second != server) {
+            targets = std::pair{server, second};
+        }
     }
-    if (nat_socket) {
-        nat_socket->deleteLater();
-        nat_socket = nullptr;
-    }
-    emit NatStatusChanged(status);
+
+    QPointer<ExternalReferenceProbe> self{this};
+    std::thread{[self, targets] {
+        const openpak::nat::Result result = targets
+                                                ? openpak::nat::Run(targets->first, targets->second)
+                                                : openpak::nat::Result{};
+        QMetaObject::invokeMethod(
+            qApp,
+            [self, result] {
+                if (!self) {
+                    return;
+                }
+                self->nat_running = false;
+                self->last_type = QChar::fromLatin1(result.Type());
+                self->last_detail =
+                    result.mapping == openpak::nat::Mapping::Unknown
+                        ? tr("Neither NAT check server answered on UDP 10025.")
+                        : tr("%1 mapping, %2 filtering, seen as %3")
+                              .arg(QString::fromLatin1(openpak::nat::Name(result.mapping)),
+                                   QString::fromLatin1(openpak::nat::Name(result.filtering)),
+                                   QString::fromStdString(result.external));
+                const char type = result.Type();
+                emit self->NatStatusChanged(type == 'A' || type == 'B' ? NatStatus::Open
+                                            : type == 'F'              ? NatStatus::Unknown
+                                                                       : NatStatus::Strict);
+            },
+            Qt::QueuedConnection);
+    }}.detach();
 }
 
 void ExternalReferenceProbe::PingBackend() {

@@ -35,6 +35,10 @@ add_library(openpak::client ALIAS openpak_client)
 target_include_directories(openpak_client PUBLIC client)
 target_link_libraries(openpak_client PUBLIC fmt::fmt nlohmann_json::nlohmann_json httplib::httplib OpenSSL::SSL OpenSSL::Crypto)
 target_compile_definitions(openpak_client PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT ENABLE_WEB_SERVICE)
+# The NAT check speaks UDP itself.
+if(WIN32)
+  target_link_libraries(openpak_client PUBLIC ws2_32 iphlpapi)
+endif()
 # Some hosts (Dolphin) build with -fno-exceptions globally; the library and its
 # dependencies throw and catch, so they are re-enabled here no matter what a
 # host decided for itself.
@@ -75,7 +79,7 @@ endif()
 # with no Qt and no libarchive in them, so a build without Qt still runs them.
 if(BUILD_TESTING OR CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   enable_testing()
-  foreach(check baas compatibility contained_path friend_structs my_page network_profile profile_account session_presence zip_store)
+  foreach(check baas bcat compatibility contained_path friend_structs my_page nat_check network_profile profile_account push session_presence zip_store)
     add_executable(${check}_test tests/${check}_test.cpp)
     target_link_libraries(${check}_test PRIVATE openpak::client)
     add_test(NAME ${check} COMMAND ${check}_test)
