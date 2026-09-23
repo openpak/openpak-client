@@ -249,6 +249,10 @@ Page* MakeInvitationsPage(const PageContext& context) {
     if (IsWfc(context.host->GetFamily())) {
         return NotHerePage(Tr("Wii and DS games invite through their own friend codes, inside the game."));
     }
+    if (context.host->GetFamily() == Family::N3DS) {
+        return NotHerePage(Tr("The 3DS emulator cannot join online games yet, so there are no "
+                              "invitations here. Your phone shows the ones you receive."));
+    }
     struct Waiting {
         std::vector<Api::CoreInvitation> core;
         std::vector<client::session::Invitation> native;
@@ -762,10 +766,24 @@ Page* MakeModsPage(const PageContext& context) {
 
                 for (const Api::Mod& mod : catalogue.mods) {
                     const QString name = QString::fromStdString(mod.name);
-                    const std::filesystem::path dir = mods_dir.empty() ? mods_dir : mods_dir / ModDirName(mod);
+                    // One mod per title: the title's folder is the mod, and a marker in it says
+                    // which catalogue mod put it there.
+                    const bool one_per_title = context.host->OneModPerTitle();
+                    const std::filesystem::path dir = mods_dir.empty() || one_per_title
+                                                          ? mods_dir
+                                                          : mods_dir / ModDirName(mod);
                     std::error_code ec;
-                    const bool installed = !dir.empty() && std::filesystem::exists(dir, ec) &&
-                                           !std::filesystem::is_empty(dir, ec);
+                    const std::filesystem::path marker = dir.empty() ? dir : dir / ".openpak-mod";
+                    const auto installed_id = [marker] {
+                        std::ifstream in(marker);
+                        std::string id;
+                        std::getline(in, id);
+                        return id;
+                    };
+                    const bool occupied = !dir.empty() && std::filesystem::exists(dir, ec) &&
+                                          !std::filesystem::is_empty(dir, ec);
+                    const bool installed =
+                        occupied && (!one_per_title || installed_id() == mod.id);
 
                     // Nothing is registered anywhere: the host's own mod manager lists what is
                     // on disk, so a mod installed here is disabled or deleted there.
@@ -776,12 +794,30 @@ Page* MakeModsPage(const PageContext& context) {
                             context.status(Tr("This build has nowhere to install mods."));
                             return;
                         }
+                        // Never over a mod somebody put there by hand.
+                        std::error_code exists_ec;
+                        if (one_per_title && std::filesystem::exists(dir, exists_ec) &&
+                            !std::filesystem::is_empty(dir, exists_ec) &&
+                            installed_id().empty()) {
+                            context.status(Tr("Another mod is installed for this title. Remove it "
+                                              "first."));
+                            return;
+                        }
                         install->setEnabled(false);
                         context.queue->Run(
                             page,
-                            [mod, dir]() -> int {
+                            [mod, dir, marker, one_per_title]() -> int {
                                 const auto package = Api::DownloadModPackage(mod);
-                                return !package ? 1 : UnpackMod(*package, dir) ? 0 : 2;
+                                if (!package) {
+                                    return 1;
+                                }
+                                if (!UnpackMod(*package, dir)) {
+                                    return 2;
+                                }
+                                if (one_per_title) {
+                                    std::ofstream(marker, std::ios::trunc) << mod.id << '\n';
+                                }
+                                return 0;
                             },
                             [=](int failure) {
                                 install->setEnabled(true);
@@ -843,6 +879,13 @@ Page* MakeModsPage(const PageContext& context) {
 Page* MakeNewsPage(const PageContext& context) {
     if (IsWfc(context.host->GetFamily())) {
         return NotHerePage(Tr("Wii and DS games have no news channel."));
+    }
+    // Wii U and 3DS news reaches the console itself, on the network (UX spec §3.6).
+    if (context.host->GetFamily() == Family::WiiU) {
+        return NotHerePage(Tr("Wii U news lives in Miiverse, on the network."));
+    }
+    if (context.host->GetFamily() == Family::N3DS) {
+        return NotHerePage(Tr("3DS news arrives through Miiverse and SpotPass, on the network."));
     }
     auto* page = new Page;
     QHBoxLayout* header = nullptr;

@@ -35,6 +35,11 @@ public:
     // The local profile the OpenPak account belongs to, for the sign-out confirmation; empty on a
     // host with one identity.
     virtual QString ProfileName() const { return {}; }
+    // The Account page's console rows on a Wii U or 3DS host (UX spec §3.6), which the host's
+    // own identity call knows: "PNID {0}", or the 3DS friend code and principal, and the console
+    // link. Empty shows "—". The Switch hosts' rows come from the session, the WFC hosts have none.
+    virtual QString ConsoleIdentity() const { return {}; }
+    virtual QString ConsoleLink() const { return {}; }
 
     // account and friends (the host owns the session and the friend cache)
     virtual bool IsLinked() const = 0;
@@ -61,6 +66,9 @@ public:
     };
     virtual std::vector<Title> InstalledTitles() const { return {}; }
     virtual std::filesystem::path ModDirectory(u64 /*title_id*/) { return {}; }
+    // True when the host applies one mod per title straight from ModDirectory (Azahar's
+    // LayeredFS: load/mods/<title>/romfs), rather than one folder per mod inside it.
+    virtual bool OneModPerTitle() const { return false; }
 
     // Cloud saves. The defaults are SaveSync's: a folder per title (SaveDirectory), keyed in the
     // cloud by the 16-digit title id. A host whose save is something else -- melonDS keeps one

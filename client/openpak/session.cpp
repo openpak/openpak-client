@@ -25,6 +25,10 @@
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
+#if defined(LIBRESSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x30000000L
+#include <openssl/bn.h>
+#include <openssl/rsa.h>
+#endif
 
 #include "openpak/account.h"
 #include "openpak/api.h"
@@ -40,6 +44,29 @@
 namespace openpak::client::session {
 
 namespace {
+
+// A 2048-bit RSA key. EVP_RSA_gen is OpenSSL 3; LibreSSL (Azahar's bundled TLS) and older
+// OpenSSL build it from RSA_generate_key_ex.
+EVP_PKEY* GenerateRsaKey() {
+#if defined(LIBRESSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x30000000L
+    EVP_PKEY* key = EVP_PKEY_new();
+    RSA* rsa = RSA_new();
+    BIGNUM* exponent = BN_new();
+    const bool ok = key != nullptr && rsa != nullptr && exponent != nullptr &&
+                    BN_set_word(exponent, RSA_F4) == 1 &&
+                    RSA_generate_key_ex(rsa, 2048, exponent, nullptr) == 1 &&
+                    EVP_PKEY_assign_RSA(key, rsa) == 1;
+    BN_free(exponent);
+    if (!ok) {
+        RSA_free(rsa);
+        EVP_PKEY_free(key);
+        return nullptr;
+    }
+    return key;
+#else
+    return EVP_RSA_gen(2048);
+#endif
+}
 
 // Nintendo's own names, on purpose: OpenPak answers to them and routes by SNI, so one address
 // serves the whole chain and a title sees the names it was built to see.
@@ -259,7 +286,7 @@ bool EnsureClientCertificate(const Endpoint& endpoint) {
         return true;
     }
 
-    EVP_PKEY* key = EVP_RSA_gen(2048);
+    EVP_PKEY* key = GenerateRsaKey();
     if (key == nullptr) {
         OPENPAK_LOG_ERROR("[OpenPak] Could not generate a device key");
         return false;

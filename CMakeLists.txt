@@ -5,7 +5,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(OPENPAK_BUILD_QT "Build the Qt dialogs (openpak::qt)" ON)
 
 include(FetchContent)
-find_package(OpenSSL REQUIRED)
+# A host that builds its own TLS library (Azahar's bundled LibreSSL) names it OpenSSL::SSL and
+# OpenSSL::Crypto first, so one TLS implementation ends up in the binary, not two.
+if(NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
+  find_package(OpenSSL REQUIRED)
+endif()
 if(NOT TARGET fmt::fmt)
   find_package(fmt QUIET)
 endif()

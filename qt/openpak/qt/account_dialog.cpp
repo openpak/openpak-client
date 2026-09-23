@@ -1203,16 +1203,25 @@ void OpenPakAccountDialog::RefreshAccount() {
     header_code->setVisible(signed_in && !code.empty());
     account_code->setText(code.empty() ? QStringLiteral("—") : QString::fromStdString(code));
     const u64 pid = Common::OpenPakAccount::GetPid();
-    account_pid->setText(openpak::qt::IsWfc(controller->GetFamily())
-                             ? tr("Wii and DS games have no console account; OpenPak names you "
-                                  "and keeps your saves.")
-                         : pid != 0 ? tr("PID %1").arg(pid)
-                                    : QStringLiteral("—"));
-    account_link->setText(openpak::client::session::Linked()
-                              ? tr("Linked as %1").arg(QString::fromStdString(
-                                    openpak::client::session::Nickname()))
-                              : tr("This emulator's console account is not linked yet; signing in "
-                                   "links it."));
+    const openpak::qt::Family family = controller->GetFamily();
+    if (family == openpak::qt::Family::WiiU || family == openpak::qt::Family::N3DS) {
+        // The host's own identity call minted these; it words them.
+        const QString identity = controller->ConsoleIdentity();
+        const QString link = controller->ConsoleLink();
+        account_pid->setText(identity.isEmpty() ? QStringLiteral("—") : identity);
+        account_link->setText(link.isEmpty() ? QStringLiteral("—") : link);
+    } else {
+        account_pid->setText(openpak::qt::IsWfc(family)
+                                 ? tr("Wii and DS games have no console account; OpenPak names "
+                                      "you and keeps your saves.")
+                             : pid != 0 ? tr("PID %1").arg(pid)
+                                        : QStringLiteral("—"));
+        account_link->setText(openpak::client::session::Linked()
+                                  ? tr("Linked as %1").arg(QString::fromStdString(
+                                        openpak::client::session::Nickname()))
+                                  : tr("This emulator's console account is not linked yet; "
+                                       "signing in links it."));
+    }
     if (!signed_in) {
         header_avatar_source = {};
         UpdateHeroSizing();
