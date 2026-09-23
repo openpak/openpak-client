@@ -219,6 +219,9 @@ httplib::Result Send(const std::string& method, const std::string& path, const s
     httplib::Client& client = SharedClient();
 
     httplib::Headers headers{{"User-Agent", "citron-openpak"}};
+    if (std::string client_header = openpak::Platform::ClientHeader(); !client_header.empty()) {
+        headers.emplace("X-OpenPak-Client", std::move(client_header));
+    }
     if (!bearer.empty()) {
         headers.emplace("Authorization", "Bearer " + bearer);
     }

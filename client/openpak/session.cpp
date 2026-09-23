@@ -340,6 +340,11 @@ std::unique_ptr<httplib::SSLClient> MakeClient(const Endpoint& endpoint, const c
     client->set_write_timeout(TimeoutSeconds, 0);
     client->set_follow_location(false);
 
+    // Which emulator is asking, on every request of the chain and everything after it.
+    if (std::string header = Platform::ClientHeader(); !header.empty()) {
+        client->set_default_headers({{"X-OpenPak-Client", std::move(header)}});
+    }
+
     return client;
 }
 

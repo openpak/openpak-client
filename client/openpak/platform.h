@@ -20,6 +20,12 @@ std::filesystem::path CacheDir();
 // empty answer, is the single shared identity every host had before profiles.
 void SetProfileSource(std::function<std::string()> source);
 std::string ProfileId();
+// Which emulator this is and its build ("eden", "0.1.0-abc1234"), set once by the host at startup.
+// Every request the library makes to OpenPak says so in X-OpenPak-Client: <name>/<version>, so the
+// servers can tell the emulators apart. Not set, no header.
+void SetClient(std::string name, std::string version);
+// "<name>/<version>", or empty before SetClient.
+std::string ClientHeader();
 bool CreateParentDirs(const std::filesystem::path& path);
 bool WriteFile(const std::filesystem::path& path, const std::string& contents);
 std::string ReadFile(const std::filesystem::path& path);

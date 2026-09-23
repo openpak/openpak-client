@@ -27,6 +27,13 @@ static std::mutex g_profile_mutex;
 static std::function<std::string()> g_profile_source;
 void SetProfileSource(std::function<std::string()> source) { std::lock_guard lock{g_profile_mutex}; g_profile_source = std::move(source); }
 std::string ProfileId() { std::lock_guard lock{g_profile_mutex}; return g_profile_source ? g_profile_source() : std::string{}; }
+static std::mutex g_client_mutex;
+static std::string g_client;
+void SetClient(std::string name, std::string version) {
+    std::lock_guard lock{g_client_mutex};
+    g_client = name.empty() ? std::string{} : name + "/" + (version.empty() ? "unknown" : version);
+}
+std::string ClientHeader() { std::lock_guard lock{g_client_mutex}; return g_client; }
 bool CreateParentDirs(const std::filesystem::path& path) { std::error_code ec; std::filesystem::create_directories(path.parent_path(), ec); return !ec; }
 bool WriteFile(const std::filesystem::path& path, const std::string& contents) {
     CreateParentDirs(path);
