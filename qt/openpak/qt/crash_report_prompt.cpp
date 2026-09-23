@@ -10,13 +10,9 @@
 
 #include "openpak/crash_reports.h"
 #include "openpak/log.h"
+#include "openpak/qt/strings.h"
 
 namespace openpak::qt {
-namespace {
-QString Tr(const char* text) {
-    return QCoreApplication::translate("OpenPakCrashReports", text);
-}
-} // namespace
 
 void OfferCrashReports(QWidget* parent) {
     auto reports = CrashReports::Pending();
@@ -39,9 +35,9 @@ void OfferCrashReports(QWidget* parent) {
         QMessageBox box(parent);
         box.setIcon(QMessageBox::Question);
         box.setWindowTitle(Tr("Send a crash report?"));
-        box.setText(Tr("The emulator crashed last time (%n report(s) saved). Send to OpenPak to "
-                       "help fix it?")
-                        .replace(QStringLiteral("%n"), QString::number(reports.size())));
+        box.setText(Tr("The emulator crashed last time. Send the report to OpenPak to help fix it? "
+                       "Reports saved: %1")
+                        .arg(reports.size()));
         box.setInformativeText(
             Tr("A report holds the emulator version, your OS, the game that was running and the "
                "last lines of the log. If you are signed in, it is sent with your account.\n\n"

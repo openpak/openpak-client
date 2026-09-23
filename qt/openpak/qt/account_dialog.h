@@ -3,11 +3,8 @@
 
 #pragma once
 
-#include <functional>
 #include <memory>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 #include <QDialog>
 #include <QPixmap>
@@ -16,42 +13,28 @@
 #include "openpak/types.h"
 #include "openpak/qt/host.h"
 
-class QAbstractButton;
-class QButtonGroup;
-class QHBoxLayout;
 class QKeyEvent;
 class QLabel;
-class QLineEdit;
-class QListView;
+class QListWidget;
+class QProgressBar;
 class QPushButton;
-class QResizeEvent;
 class QShowEvent;
 class QStackedWidget;
-class QStandardItemModel;
-class QModelIndex;
 class QToolButton;
-class QVBoxLayout;
-namespace openpak::qt { class Host; }
-class OpenPakFriendDelegate;
-class ExternalReferenceProbe;
-class OpenPakPageNavArrow;
-
-namespace Core::HID {
-}
+class QWidget;
 
 namespace openpak::qt {
 class Page;
 class WorkQueue;
-struct PageContext;
 } // namespace openpak::qt
 namespace WebService::OpenPakApi {
 struct AccountFriends;
 }
-class QProgressBar;
 
-// The OpenPak window: the reference's seven pages in the reference's order -- Account, Friends,
+// The OpenPak window (UX spec §3.6): the seven pages in a left list -- Account, Friends,
 // Invitations, Cloud saves, Mods, News, Status -- each loaded when the window opens and again
-// when it is navigated to, with every network request queued behind the one before it.
+// when it is navigated to, with every network request queued behind the one before it. The page
+// header carries the title and Refresh, the footer the busy bar, one status line and Close.
 class OpenPakAccountDialog : public QDialog {
     Q_OBJECT
 
@@ -74,15 +57,20 @@ public:
                                    QWidget* parent = nullptr, int initial_page = kAccountPage);
     ~OpenPakAccountDialog() override;
 
+    // The page the window last showed in this run, for the Open OpenPak hotkey (UX spec §3.1),
+    // which opens the window where it was left.
+    static int LastPage();
+
+    void GoToPage(int index);
+
 signals:
-    // Routed up to GMainWindow, which owns the one persistent chat window --
-    // opens/reuses it, creates a room if needed, and sends the invite.
+    // Routed up to the host's main window, which owns the chat window (Citron's experiment; the
+    // Friends page offers it only when Host::ChatEnabled()).
     void InviteToChatRequested(u64 pid, QString name);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
 private:
@@ -90,76 +78,46 @@ private:
     void ReloadPage(int index, bool force);
     void ReloadAll();
     void RefreshAccount();
-    void OnSignInOrOut();
+    void ShowAvatar();
 
-    void UpdateDashboard();
+    void UpdateBadge();
     void OnChangeAvatar();
     void OnEditUsername();
-    void OnChangeBackground();
-    void OnRemoveBackground();
-    void ApplyBackground(const QPixmap& pixmap);
-    void LoadSavedBackground();
-    void UpdateHeroSizing();
+    void OnSignOut();
 
-    void GoToPage(int index);
-    void UpdatePageNav();
     void WireControllerNav();
-
     void OnDirectionalNav(int dx, int dy);
     void OnControllerActivate();
     bool ConfirmAction(const QString& title, const QString& message, const QString& yes_text,
-                       const QString& no_text, const std::string& icon_base64 = {});
+                       const QString& no_text);
 
     openpak::qt::Host* controller;
-    int initial_page = kAccountPage;
     openpak::qt::Navigation* controller_navigation = nullptr;
     openpak::qt::WorkQueue* queue = nullptr;
     std::shared_ptr<WebService::OpenPakApi::AccountFriends> friends_snapshot;
     std::vector<openpak::qt::Page*> pages; // Friends onwards, in page order
 
-    QLabel* header_avatar;
-    QPixmap header_avatar_source; // undecorated (square) -- re-rounded at whatever size fits
-    QLabel* header_name;
-    QToolButton* edit_name_button;
-    QLabel* header_code;
-    QLabel* status;
+    QListWidget* nav = nullptr;
+    QStackedWidget* pages_stack = nullptr;
+    QLabel* page_title = nullptr;
+    QPushButton* refresh_button = nullptr;
+    QLabel* status = nullptr;
     QProgressBar* busy = nullptr;
+    int current_page = -1;
 
-    QWidget* header_card = nullptr;
-
-    QWidget* account_details = nullptr;
-    QLabel* account_signed_out = nullptr;
+    // The Account page.
+    QWidget* account_signed_in = nullptr;
+    QWidget* account_signed_out = nullptr;
+    QLabel* avatar = nullptr;
+    QPixmap avatar_source;
+    QLabel* name = nullptr;
+    QLabel* code_pill = nullptr;
     QLabel* account_code = nullptr;
-    QLabel* account_pid = nullptr;
+    QLabel* account_identity = nullptr;
     QLabel* account_consoles = nullptr;
-    QLabel* account_players = nullptr;
-    QLabel* account_server = nullptr;
     QLabel* account_link = nullptr;
-    QPushButton* sign_button = nullptr;
+    QPushButton* link_retry = nullptr;
+    QWidget* first_focus = nullptr;
 
     QTimer refresh_timer;
-
-    ExternalReferenceProbe* network_probe;
-    QLabel* nat_label;
-    QLabel* ping_label;
-    QTimer* status_check_timer = nullptr;
-    int status_check_dots = 0;
-    bool nat_checking = false;
-    bool ping_checking = false;
-
-    QStackedWidget* pages_stack = nullptr;
-    QStringList page_titles;
-    int current_page = -1;
-    QWidget* home_default_focus = nullptr;
-    QWidget* active_popup = nullptr;
-    QLabel* page_title_label = nullptr;
-    OpenPakPageNavArrow* nav_left_arrow = nullptr;
-    OpenPakPageNavArrow* nav_right_arrow = nullptr;
-
-    QLabel* requests_badge;
-
-    QWidget* dash_online_dot = nullptr;
-    QLabel* dash_online_text = nullptr;
-    QLabel* dash_friends_online_value = nullptr;
-    QLabel* dash_in_game_value = nullptr;
 };

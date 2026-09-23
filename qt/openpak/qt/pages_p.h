@@ -23,8 +23,10 @@
 #include <QWidget>
 
 #include "openpak/api.h"
+#include "openpak/qt/strings.h"
 #include "openpak/types.h"
 
+class QIcon;
 class QLabel;
 class QPushButton;
 class QToolButton;
@@ -88,6 +90,8 @@ struct PageContext {
     std::function<bool(const QString& title, const QString& message, const QString& yes)> confirm;
     // Closes the window, which the reference does before it launches a game.
     std::function<void()> close;
+    // Opens the window at another page (OpenPakAccountDialog::k*Page).
+    std::function<void(int page)> go_to;
     // What the Friends page last drew, for the pages that name or picture a sender and for the
     // Account page's counts.
     std::shared_ptr<WebService::OpenPakApi::AccountFriends> friends;
@@ -112,8 +116,6 @@ public:
     std::function<void(bool force)> reload;
 };
 
-QString Tr(const char* text);
-
 // A page that cannot apply to the host's console family (UX spec §3.6): the reason, centred, with
 // a link under it when there is somewhere to go instead. The page count and order stay the same
 // on every family, so this stands where the page would be.
@@ -127,11 +129,17 @@ QString GameName(Host* host, const std::string& title_id_hex);
 // "Nintendo Switch", "Wii U"... for an adapter namespace; empty for none.
 QString ConsoleName(const std::string& name_space);
 
-// Local time as the reference words it, and how long ago or until.
+// Local time in the locale's short date and time format, the one way every time is shown (UX
+// spec §5.4); empty for none. LocalTimeIso reads the ISO 8601 text the website sends.
 QString LocalTime(s64 unix_seconds);
-QString Ago(s64 unix_seconds);
-QString Until(s64 unix_seconds);
+QString LocalTimeIso(const std::string& iso8601);
+s64 SecondsIso(const std::string& iso8601);
 QString Bytes(u64 size);
+
+// The icon a page, a setting or an action wears everywhere (UX spec §6): the desktop theme's,
+// else the closest one the style has. Names: account, friends, invitations, saves, mods, news,
+// status, settings, website, sign-out, accept, decline, remove, block, edit, picture, copy.
+QIcon Icon(const char* name);
 
 // A circle with a name's first letter, for anyone without a picture.
 QPixmap Initials(const QString& name, int size);
@@ -153,7 +161,12 @@ void TitleIcon(QWidget* owner, Host* host, const std::string& title_id_hex,
 QLabel* DimLabel(const QString& text);
 QLabel* BoldLabel(const QString& text, int grow = 0);
 QPushButton* TextButton(const QString& text);
-QToolButton* IconButton(const QString& glyph, const QString& tooltip);
+// An icon button whose tooltip and accessible name are its words (never an emoji glyph).
+QToolButton* IconButton(const char* icon, const QString& tooltip);
+
+// The page body a signed-out person sees where a page needs an account: the words, centred, and
+// Sign in... (UX spec §3.6).
+QWidget* NeedSignIn(Host* host);
 
 // A frame that toggles or activates on a click, Space or Enter, for the controller's A button.
 class ClickCard : public QFrame {
@@ -174,6 +187,8 @@ public:
     void Clear();
     void Add(QWidget* row);
     void AddEmpty(const QString& text);
+    // common.need_sign_in with Sign in..., in place of a page's rows.
+    void AddNeedSignIn(Host* host);
     void AddHeading(const QString& text);
     // A card row: a bold title, dim lines under it, a trailing note and buttons on the right.
     QFrame* AddRow(const QString& title, const QStringList& lines,

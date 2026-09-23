@@ -29,11 +29,15 @@ struct MenuHooks {
     std::function<void(int page)> open_window; // OpenPakAccountDialog::k*Page
     std::function<void()> open_settings;   // the host's settings, at its OpenPak section
     QString profile;                       // for the sign-out confirmation; empty for one identity
+    std::function<QString()> profile_name; // the same, asked when the menu signs out (profiles change)
 };
 
 // The OpenPak menu, rebuilt each time it opens, placed immediately left of Help (the menu bar's
 // last menu).
 QMenu* AddOpenPakMenu(QMenuBar* menu_bar, MenuHooks hooks);
+
+// The same items in a menu the host already placed (a .ui file's, or a top bar button's).
+void PopulateOpenPakMenu(QMenu* menu, MenuHooks hooks);
 
 // Bearer-only accounts (Wii, DS): mints the website token, stores it under the account's name,
 // and says which machine uploads the saves. Blocking, network: an OpenPakSignInDialog submitter.
@@ -43,7 +47,9 @@ QString SignInAccountOnly(const QString& email, const QString& password, const Q
 // Forgets the stored account now and revokes its token on the server off the UI thread.
 void SignOutAndRevoke();
 
-// "{emulator} on {machine}" (signin.device_default_single).
+// "{emulator} on {machine}" (signin.device_default_single), and with a profile
+// "{emulator} — {profile} on {machine}" (signin.device_default).
 QString DefaultDeviceName(const QString& emulator);
+QString DefaultDeviceName(const QString& emulator, const QString& profile);
 
 } // namespace openpak::qt

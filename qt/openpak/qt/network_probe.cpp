@@ -13,6 +13,7 @@
 #include "openpak/nat_check.h"
 
 #include "openpak/qt/host.h"
+#include "openpak/qt/strings.h"
 
 #ifdef ENABLE_WEB_SERVICE
 #include "openpak/api.h"
@@ -70,8 +71,8 @@ void ExternalReferenceProbe::ProbeNat() {
                 self->last_type = QChar::fromLatin1(result.Type());
                 self->last_detail =
                     result.mapping == openpak::nat::Mapping::Unknown
-                        ? tr("Neither NAT check server answered on UDP 10025.")
-                        : tr("%1 mapping, %2 filtering, seen as %3")
+                        ? openpak::qt::Tr("Neither NAT check server answered on UDP 10025.")
+                        : openpak::qt::Tr("%1 mapping, %2 filtering, seen as %3")
                               .arg(QString::fromLatin1(openpak::nat::Name(result.mapping)),
                                    QString::fromLatin1(openpak::nat::Name(result.filtering)),
                                    QString::fromStdString(result.external));

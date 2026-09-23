@@ -36,4 +36,7 @@ void SplitString(const std::string& str, char delim, std::vector<std::string>& o
 std::string ToLower(std::string s);
 std::string ToUpper(std::string s);
 std::string StripSpaces(const std::string& s);
+// Android: the system's public roots (/system/etc/security/cacerts and the updatable APEX copy)
+// as one PEM blob, read once, for a TLS library that brings no root store of its own.
+const std::string& AndroidSystemRoots();
 } // namespace openpak::Platform

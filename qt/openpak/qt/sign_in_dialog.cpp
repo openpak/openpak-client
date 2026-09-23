@@ -20,11 +20,15 @@
 #include <QVBoxLayout>
 
 #include "openpak/api.h"
+#include "openpak/qt/host_kit.h"
+#include "openpak/qt/strings.h"
+
+using openpak::qt::Tr;
 
 OpenPakSignInDialog::OpenPakSignInDialog(QWidget* parent, const QString& intro_text,
                                          const QString& error, const QString& email)
     : QDialog(parent) {
-    setWindowTitle(tr("Sign in to OpenPak"));
+    setWindowTitle(Tr("Sign in to OpenPak"));
     setMinimumWidth(420);
 
     auto* layout = new QVBoxLayout(this);
@@ -50,30 +54,30 @@ OpenPakSignInDialog::OpenPakSignInDialog(QWidget* parent, const QString& intro_t
     if (!eye.isNull()) {
         QAction* reveal = password_edit->addAction(eye, QLineEdit::TrailingPosition);
         reveal->setCheckable(true);
-        reveal->setToolTip(tr("Show password"));
+        reveal->setToolTip(Tr("Show password"));
         connect(reveal, &QAction::toggled, this, [this](bool on) {
             password_edit->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
         });
     }
-    device_edit = new QLineEdit;
-    device_label = new QLabel(tr("Device name"));
-    device_hint = new QLabel(tr("How this machine appears in your account's device list."));
+    // The device name, filled in (UX spec §3.3): how this machine appears in the account's device
+    // list. A host names itself with SetDeviceName; until then the application's name stands in.
+    device_edit = new QLineEdit(openpak::qt::DefaultDeviceName(QCoreApplication::applicationName()));
+    device_label = new QLabel(Tr("Device name"));
+    device_hint = new QLabel(Tr("How this machine appears in your account's device list."));
     device_hint->setWordWrap(true);
     device_hint->setEnabled(false);
     auto* form = new QFormLayout;
-    form->addRow(tr("Email"), email_edit);
-    form->addRow(tr("Password"), password_edit);
+    form->addRow(Tr("Email"), email_edit);
+    form->addRow(Tr("Password"), password_edit);
     form->addRow(device_label, device_edit);
     form->addRow(QString{}, device_hint);
     layout->addLayout(form);
-    device_label->hide();
-    device_edit->hide();
-    device_hint->hide();
 
     auto* create = new QLabel(QStringLiteral("<a href=\"%1/register\">%2</a>")
                                   .arg(QString::fromStdString(WebService::OpenPakApi::BaseUrl()),
-                                       tr("Create an account")));
+                                       Tr("Create an account").toHtmlEscaped()));
     create->setOpenExternalLinks(true);
+    create->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
     layout->addWidget(create);
 
     busy = new QProgressBar;
@@ -82,12 +86,14 @@ OpenPakSignInDialog::OpenPakSignInDialog(QWidget* parent, const QString& intro_t
     busy->setTextVisible(false);
     busy->hide();
     auto* buttons = new QDialogButtonBox;
-    submit = buttons->addButton(tr("Sign in"), QDialogButtonBox::AcceptRole);
+    submit = buttons->addButton(Tr("Sign in"), QDialogButtonBox::AcceptRole);
     submit->setDefault(true);
-    buttons->addButton(tr("Cancel"), QDialogButtonBox::RejectRole);
+    buttons->addButton(Tr("Cancel"), QDialogButtonBox::RejectRole);
+    // The busy bar sits beside the buttons while the request runs; the fields stay visible.
     auto* footer = new QHBoxLayout;
+    footer->addStretch(1);
     footer->addWidget(busy, 0, Qt::AlignVCenter);
-    footer->addWidget(buttons, 1);
+    footer->addWidget(buttons);
     layout->addLayout(footer);
 
     connect(email_edit, &QLineEdit::textChanged, this, &OpenPakSignInDialog::UpdateReady);
@@ -96,14 +102,12 @@ OpenPakSignInDialog::OpenPakSignInDialog(QWidget* parent, const QString& intro_t
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     UpdateReady();
 
+    // Password when the email is already there, else Email.
     (email.isEmpty() ? email_edit : password_edit)->setFocus();
 }
 
 void OpenPakSignInDialog::SetDeviceName(const QString& device_default) {
     device_edit->setText(device_default);
-    device_label->show();
-    device_edit->show();
-    device_hint->show();
 }
 
 void OpenPakSignInDialog::SetSubmitter(Submitter submitter_) {

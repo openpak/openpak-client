@@ -51,6 +51,7 @@
 #include "openpak/platform.h"
 #include "openpak/qt/account_page_p.h"
 #include "openpak/qt/host.h"
+#include "openpak/qt/network_probe.h"
 #include "openpak/qt/pages_p.h"
 #include "openpak/qt/prompts.h"
 #include "openpak/qt/save_sync.h"
@@ -159,31 +160,6 @@ QFrame* StateRow(bool up, const QString& name, const QString& detail, const QStr
     return row;
 }
 
-// The invitation's words in the language the UI speaks: the exact tag, then the language alone,
-// then English, then whatever the game wrote.
-QString MessageFor(const std::map<std::string, std::string>& messages) {
-    if (messages.empty()) {
-        return {};
-    }
-    const std::string tag = QLocale().bcp47Name().toStdString();
-    const std::string language = tag.substr(0, tag.find('-'));
-    const auto starts = [](const std::string& text, const std::string& prefix) {
-        return text.size() >= prefix.size() &&
-               std::equal(prefix.begin(), prefix.end(), text.begin(), [](char a, char b) {
-                   return std::tolower(static_cast<unsigned char>(a)) ==
-                          std::tolower(static_cast<unsigned char>(b));
-               });
-    };
-    for (const std::string& wanted : {tag, language, std::string{"en-US"}, std::string{"en"}}) {
-        for (const auto& [key, text] : messages) {
-            if (starts(key, wanted) && (key.size() == wanted.size() || key[wanted.size()] == '-')) {
-                return QString::fromStdString(text);
-            }
-        }
-    }
-    return QString::fromStdString(messages.begin()->second);
-}
-
 #ifdef OPENPAK_HAVE_LIBARCHIVE
 // Unpack a verified package into dir, replacing what was there. False -- and nothing left
 // behind -- when an entry names its way out of dir: the package came off the network.
@@ -249,6 +225,10 @@ Page* MakeInvitationsPage(const PageContext& context) {
     if (IsWfc(context.host->GetFamily())) {
         return NotHerePage(Tr("Wii and DS games invite through their own friend codes, inside the game."));
     }
+    if (context.host->GetFamily() == Family::N3DS) {
+        return NotHerePage(Tr("The 3DS emulator cannot join online games yet, so there are no "
+                              "invitations here. Your phone shows the ones you receive."));
+    }
     struct Waiting {
         std::vector<Api::CoreInvitation> core;
         std::vector<client::session::Invitation> native;
@@ -258,9 +238,6 @@ Page* MakeInvitationsPage(const PageContext& context) {
     auto* page = new Page;
     QHBoxLayout* header = nullptr;
     QVBoxLayout* layout = Frame(page, header);
-    QPushButton* refresh = TextButton(Tr("Refresh"));
-    header->addStretch(1);
-    header->addWidget(refresh);
     auto* list = new RowList;
     layout->addWidget(list, 1);
 
@@ -303,7 +280,7 @@ Page* MakeInvitationsPage(const PageContext& context) {
 
         auto* text = new QVBoxLayout;
         text->setSpacing(2);
-        QLabel* title = BoldLabel(game.isEmpty() ? Tr("A game that is not in your library") : game);
+        QLabel* title = BoldLabel(game.isEmpty() ? Tr("Unknown game") : game);
         title->setWordWrap(true);
         text->addWidget(title);
         text->addWidget(DimLabel(Tr("From %1").arg(sender)));
@@ -322,8 +299,8 @@ Page* MakeInvitationsPage(const PageContext& context) {
         QPushButton* join = TextButton(Tr("Join"));
         QObject::connect(join, &QPushButton::clicked, page, [=] {
             if (id == 0 || !Installed(context.host, id)) {
-                context.status(Tr("%1 is not in your library.")
-                                   .arg(game.isEmpty() ? Tr("That game") : game));
+                context.status(
+                    Tr("%1 is not in your library.").arg(game.isEmpty() ? Tr("Unknown game") : game));
                 return;
             }
             Host* host = context.host;
@@ -334,7 +311,7 @@ Page* MakeInvitationsPage(const PageContext& context) {
         QObject::connect(ignore, &QPushButton::clicked, page, [=] {
             ignore->setEnabled(false);
             context.queue->Run(page, decline, [=](std::string failure) {
-                context.status(QString::fromStdString(failure));
+                context.status(ErrorText(failure));
                 page->reload(true);
             });
         });
@@ -346,7 +323,7 @@ Page* MakeInvitationsPage(const PageContext& context) {
     page->reload = [=](bool) {
         if (!SignedIn()) {
             list->Clear();
-            list->AddEmpty(Tr("Sign in to OpenPak to use this."));
+            list->AddNeedSignIn(context.host);
             return;
         }
         context.queue->Run(
@@ -360,16 +337,16 @@ Page* MakeInvitationsPage(const PageContext& context) {
             [=](Waiting waiting) {
                 list->Clear();
                 for (const auto& one : waiting.core) {
-                    const s64 expires = QDateTime::fromString(QString::fromStdString(one.expires_at),
-                                                              Qt::ISODate)
-                                            .toSecsSinceEpoch();
+                    const QString expires = LocalTimeIso(one.expires_at);
                     add(one.from, one.title_id, {},
-                        expires > 0 ? Tr("Expires %1").arg(Until(expires)) : QString{},
+                        expires.isEmpty() ? QString{} : Tr("Expires %1").arg(expires),
                         [id = one.id] { return Api::DeclineInvitation(id); });
                 }
                 for (const auto& one : waiting.native) {
-                    add(one.sender_name, one.title_id, MessageFor(one.messages),
-                        one.created_at > 0 ? Tr("Sent %1").arg(Ago(one.created_at)) : QString{},
+                    add(one.sender_name, one.title_id, InvitationMessage(one.messages),
+                        one.expires_at > 0   ? Tr("Expires %1").arg(LocalTime(one.expires_at))
+                        : one.created_at > 0 ? Tr("Sent %1").arg(LocalTime(one.created_at))
+                                             : QString{},
                         [id = one.id] {
                             client::session::DismissInvitation(id);
                             return std::string{};
@@ -384,7 +361,6 @@ Page* MakeInvitationsPage(const PageContext& context) {
                 }
             });
     };
-    QObject::connect(refresh, &QPushButton::clicked, page, [page] { page->reload(true); });
     return page;
 }
 
@@ -406,30 +382,20 @@ Page* MakeSavesPage(const PageContext& context) {
     auto* picker = new QComboBox;
     QPushButton* upload = TextButton(Tr("Upload"));
     upload->setMinimumWidth(90);
-    upload->setToolTip(Tr("Upload this title's save; a title's first save goes up this way."));
-    QPushButton* refresh = TextButton(Tr("Refresh"));
     header->addWidget(picker, 1);
     header->addWidget(upload);
-    header->addWidget(refresh);
     QLabel* usage = DimLabel({});
     layout->addWidget(usage);
     auto* list = new RowList;
     layout->addWidget(list, 1);
-
-    // Governs only the automatic pull before launch and push on exit; the buttons here are an
-    // explicit choice each time.
-    auto* automatic = new QCheckBox(Tr("Sync cloud saves automatically when a game starts and stops"));
-    automatic->setChecked(context.host->CloudSyncEnabled());
-    QObject::connect(automatic, &QCheckBox::toggled, page,
-                     [host = context.host](bool on) { host->SetCloudSyncEnabled(on); });
-    layout->addWidget(automatic);
+    // The automatic sync is a setting now (UX spec §3.13), not a switch on this page.
 
     // The newest cloud version of each title as last drawn: an upload is based on it.
     auto newest = std::make_shared<std::map<std::string, int>>();
 
     const auto after = [=](QString done) {
         return [=](std::string failure) {
-            context.status(failure.empty() ? done : QString::fromStdString(failure));
+            context.status(failure.empty() ? done : ErrorText(failure));
             page->reload(true);
         };
     };
@@ -460,22 +426,15 @@ Page* MakeSavesPage(const PageContext& context) {
             total += version.size;
             conflict = conflict || version.conflict;
         }
-        QStringList lines{QCoreApplication::translate("OpenPakAccountDialog",
-                                                      "%1 in the cloud across %n version(s)",
-                                                      nullptr, static_cast<int>(save.versions.size()))
-                              .arg(Bytes(total))};
+        QStringList lines{Tr("In the cloud: %1 · Versions: %2")
+                              .arg(Bytes(total))
+                              .arg(static_cast<int>(save.versions.size()))};
         if (!save.versions.empty()) {
             const auto& top = save.versions.front();
-            const s64 when = QDateTime::fromString(QString::fromStdString(top.saved_at), Qt::ISODate)
-                                 .toSecsSinceEpoch();
-            QString detail = Tr("Version %1").arg(top.number);
-            if (!top.device.empty()) {
-                detail += QLatin1Char(' ') + Tr("from %1").arg(QString::fromStdString(top.device));
-            }
-            if (when > 0) {
-                detail += QStringLiteral(" — ") + LocalTime(when);
-            }
-            lines << detail;
+            lines << Tr("Latest: version %1 from %2, %3")
+                         .arg(top.number)
+                         .arg(top.device.empty() ? Tr("—") : QString::fromStdString(top.device),
+                              top.saved_at.empty() ? Tr("—") : LocalTimeIso(top.saved_at));
         }
 
         using OpenPak::SaveSync::LocalState;
@@ -488,26 +447,14 @@ Page* MakeSavesPage(const PageContext& context) {
             case LocalState::NoLocal:
                 lines << Tr("Nothing on this machine yet.");
                 break;
-            case LocalState::NoHistory:
-                lines << Tr("On this machine: last written %1, never synced with the cloud. Take "
-                            "the cloud copy or keep this one.")
-                             .arg(written);
-                break;
             case LocalState::InStep:
+            case LocalState::CloudNewer:
                 lines << Tr("On this machine: last written %1, in step with version %2.")
                              .arg(written, QString::fromStdString(local.version));
                 break;
+            case LocalState::NoHistory:
             case LocalState::ChangedHere:
-                lines << (local.version.empty()
-                              ? Tr("On this machine: last written %1, never synced with the cloud.")
-                                    .arg(written)
-                              : Tr("On this machine: last written %1, played since version %2.")
-                                    .arg(written, QString::fromStdString(local.version)));
-                break;
-            case LocalState::CloudNewer:
-                lines << Tr("On this machine: last written %1, in step with version %2; the cloud "
-                            "has a newer one.")
-                             .arg(written, QString::fromStdString(local.version));
+                lines << Tr("On this machine: last written %1, never synced with the cloud.").arg(written);
                 break;
             }
         }
@@ -532,9 +479,7 @@ Page* MakeSavesPage(const PageContext& context) {
                 sides.local_written = local.last_written;
                 sides.cloud_version = top.number;
                 sides.cloud_device = QString::fromStdString(top.device);
-                sides.cloud_saved = QDateTime::fromString(QString::fromStdString(top.saved_at),
-                                                          Qt::ISODate)
-                                        .toSecsSinceEpoch();
+                sides.cloud_saved = SecondsIso(top.saved_at);
                 sides.game_running = this_running;
                 switch (ChooseSave(page, sides)) {
                 case SaveChoice::KeepLocal:
@@ -555,7 +500,7 @@ Page* MakeSavesPage(const PageContext& context) {
             download->setEnabled(running.empty());
             download->setToolTip(running.empty() ? QString{} : Tr("Stop the running game first."));
             QObject::connect(download, &QPushButton::clicked, page, [=] {
-                if (!context.confirm(Tr("Cloud saves"),
+                if (!context.confirm(Tr("Download"),
                                      Tr("Replace the local save for %1 with the cloud copy? The "
                                         "local one is backed up beside it.")
                                          .arg(name),
@@ -571,14 +516,11 @@ Page* MakeSavesPage(const PageContext& context) {
         }
         QPushButton* remove = TextButton(Tr("Delete from cloud"));
         QObject::connect(remove, &QPushButton::clicked, page, [=] {
-            if (!context.confirm(Tr("Cloud saves"),
-                                 QCoreApplication::translate(
-                                     "OpenPakAccountDialog",
-                                     "Delete the cloud save for %1? All %n stored version(s) go, and "
-                                     "OpenPak keeps no copy. The save on this machine is not touched.",
-                                     nullptr, static_cast<int>(save.versions.size()))
+            if (!context.confirm(Tr("Delete from cloud"),
+                                 Tr("Delete the cloud save for %1? Every stored version goes, and "
+                                    "OpenPak keeps no copy. The save on this machine is not touched.")
                                      .arg(name),
-                                 Tr("Delete"))) {
+                                 Tr("Delete from cloud"))) {
                 return;
             }
             context.queue->Run(
@@ -592,10 +534,8 @@ Page* MakeSavesPage(const PageContext& context) {
                     return std::string{};
                 },
                 [=](std::string failure) {
-                    context.status(failure.empty()
-                                       ? Tr("Deleted the cloud save for %1.").arg(name)
-                                       : Tr("Could not delete the cloud save for %1: %2")
-                                             .arg(name, QString::fromStdString(failure)));
+                    context.status(failure.empty() ? Tr("Deleted the cloud save for %1.").arg(name)
+                                                   : ErrorText(failure));
                     page->reload(true);
                 });
         });
@@ -626,7 +566,7 @@ Page* MakeSavesPage(const PageContext& context) {
         if (!SignedIn()) {
             list->Clear();
             usage->clear();
-            list->AddEmpty(Tr("Sign in to OpenPak to use this."));
+            list->AddNeedSignIn(context.host);
             return;
         }
         // Where each installed title keeps its save is the host's to say, on its own thread.
@@ -670,12 +610,12 @@ Page* MakeSavesPage(const PageContext& context) {
                 list->Clear();
                 if (!loaded.list.ok) {
                     usage->clear();
-                    list->AddEmpty(QString::fromStdString(loaded.list.error));
+                    list->AddEmpty(ErrorText(loaded.list.error));
                     return;
                 }
                 usage->setText(loaded.list.allowance > 0
-                                   ? Tr("%1 of %2 used").arg(Bytes(loaded.list.allowance_used),
-                                                             Bytes(loaded.list.allowance))
+                                   ? Tr("Used: %1 of %2").arg(Bytes(loaded.list.allowance_used),
+                                                              Bytes(loaded.list.allowance))
                                    : QString{});
                 newest->clear();
                 for (Row& row : loaded.rows) {
@@ -704,14 +644,13 @@ Page* MakeSavesPage(const PageContext& context) {
             return;
         }
         if (openpak::Platform::ToLower(context.host->GetLocalAppId()) == Hex(id)) {
-            context.status(Tr("Stop the game first; its save uploads when it exits."));
+            context.status(Tr("Stop the running game first."));
             return;
         }
         upload_title(id, picker->currentText());
     });
     QObject::connect(picker, &QComboBox::currentIndexChanged, page,
                      [=] { *context.title = picker->currentData().toString().toStdString(); });
-    QObject::connect(refresh, &QPushButton::clicked, page, [page] { page->reload(true); });
     // A pull before launch or a push on exit changes what this page would say.
     QObject::connect(context.host, &Host::StatusChanged, page, [page] {
         if (page->isVisible()) {
@@ -734,9 +673,7 @@ Page* MakeModsPage(const PageContext& context) {
     QHBoxLayout* header = nullptr;
     QVBoxLayout* layout = Frame(page, header);
     auto* picker = new QComboBox;
-    QPushButton* refresh = TextButton(Tr("Refresh"));
     header->addWidget(picker, 1);
-    header->addWidget(refresh);
     auto* list = new RowList;
     layout->addWidget(list, 1);
     auto shown = std::make_shared<std::string>(); // the title the list was last fetched for
@@ -762,10 +699,24 @@ Page* MakeModsPage(const PageContext& context) {
 
                 for (const Api::Mod& mod : catalogue.mods) {
                     const QString name = QString::fromStdString(mod.name);
-                    const std::filesystem::path dir = mods_dir.empty() ? mods_dir : mods_dir / ModDirName(mod);
+                    // One mod per title: the title's folder is the mod, and a marker in it says
+                    // which catalogue mod put it there.
+                    const bool one_per_title = context.host->OneModPerTitle();
+                    const std::filesystem::path dir = mods_dir.empty() || one_per_title
+                                                          ? mods_dir
+                                                          : mods_dir / ModDirName(mod);
                     std::error_code ec;
-                    const bool installed = !dir.empty() && std::filesystem::exists(dir, ec) &&
-                                           !std::filesystem::is_empty(dir, ec);
+                    const std::filesystem::path marker = dir.empty() ? dir : dir / ".openpak-mod";
+                    const auto installed_id = [marker] {
+                        std::ifstream in(marker);
+                        std::string id;
+                        std::getline(in, id);
+                        return id;
+                    };
+                    const bool occupied = !dir.empty() && std::filesystem::exists(dir, ec) &&
+                                          !std::filesystem::is_empty(dir, ec);
+                    const bool installed =
+                        occupied && (!one_per_title || installed_id() == mod.id);
 
                     // Nothing is registered anywhere: the host's own mod manager lists what is
                     // on disk, so a mod installed here is disabled or deleted there.
@@ -773,15 +724,33 @@ Page* MakeModsPage(const PageContext& context) {
                     QObject::connect(install, &QPushButton::clicked, page, [=] {
 #ifdef OPENPAK_HAVE_LIBARCHIVE
                         if (dir.empty()) {
-                            context.status(Tr("This build has nowhere to install mods."));
+                            context.status(Tr("Could not install %1.").arg(name));
+                            return;
+                        }
+                        // Never over a mod somebody put there by hand.
+                        std::error_code exists_ec;
+                        if (one_per_title && std::filesystem::exists(dir, exists_ec) &&
+                            !std::filesystem::is_empty(dir, exists_ec) &&
+                            installed_id().empty()) {
+                            context.status(Tr("Another mod is installed for this title. Remove it "
+                                              "first."));
                             return;
                         }
                         install->setEnabled(false);
                         context.queue->Run(
                             page,
-                            [mod, dir]() -> int {
+                            [mod, dir, marker, one_per_title]() -> int {
                                 const auto package = Api::DownloadModPackage(mod);
-                                return !package ? 1 : UnpackMod(*package, dir) ? 0 : 2;
+                                if (!package) {
+                                    return 1;
+                                }
+                                if (!UnpackMod(*package, dir)) {
+                                    return 2;
+                                }
+                                if (one_per_title) {
+                                    std::ofstream(marker, std::ios::trunc) << mod.id << '\n';
+                                }
+                                return 0;
                             },
                             [=](int failure) {
                                 install->setEnabled(true);
@@ -790,41 +759,47 @@ Page* MakeModsPage(const PageContext& context) {
                                 }
                                 context.status(
                                     failure == 0   ? Tr("Installed %1.").arg(name)
-                                    : failure == 1 ? Tr("Could not install %1: the download failed or "
-                                                        "did not match its published hash.")
+                                    : failure == 1 ? Tr("%1 did not match its published hash and was refused.")
                                                          .arg(name)
                                                    : Tr("Could not install %1.").arg(name));
                             });
 #else
                         // ponytail: no unzip without libarchive (the mingw cross build); wire
                         // the PowerShell fallback save_sync uses if that build wants mods.
-                        context.status(Tr("This build cannot unpack mods."));
+                        context.status(Tr("Could not install %1.").arg(name));
 #endif
                     });
 
                     const bool favourite = std::find(catalogue.favourites.begin(), catalogue.favourites.end(),
                                                      mod.id) != catalogue.favourites.end();
-                    QPushButton* star = TextButton(favourite ? Tr("\xE2\x98\x85 Favourite") : Tr("\xE2\x98\x86 Favourite"));
+                    // The state shows in the star itself, filled or not (UX spec §3.6).
+                    const auto star_text = [](bool on) {
+                        return (on ? QStringLiteral("★ ") : QStringLiteral("☆ ")) + Tr("Favourite");
+                    };
+                    QPushButton* star = TextButton(star_text(favourite));
+                    star->setCheckable(true);
+                    star->setChecked(favourite);
+                    star->setAccessibleName(Tr("Favourite"));
                     star->setProperty("favourite", favourite);
                     QObject::connect(star, &QPushButton::clicked, page, [=] {
+                        const bool want = !star->property("favourite").toBool();
                         if (!SignedIn()) {
+                            star->setChecked(!want);
                             context.status(Tr("Sign in to OpenPak to use this."));
                             return;
                         }
-                        const bool want = !star->property("favourite").toBool();
                         star->setEnabled(false);
                         context.queue->Run(page, [id = mod.id, want] { return Api::SetModFavourite(id, want); },
                                            [=](bool ok) {
                                                star->setEnabled(true);
-                                               if (ok) {
-                                                   star->setProperty("favourite", want);
-                                                   star->setText(want ? Tr("\xE2\x98\x85 Favourite")
-                                                                      : Tr("\xE2\x98\x86 Favourite"));
-                                               }
+                                               const bool now = ok ? want : !want;
+                                               star->setProperty("favourite", now);
+                                               star->setChecked(now);
+                                               star->setText(star_text(now));
                                            });
                     });
 
-                    list->AddRow(QStringLiteral("%1  %2").arg(name, QString::fromStdString(mod.version)),
+                    list->AddRow(QStringLiteral("%1 %2").arg(name, QString::fromStdString(mod.version)),
                                  {QString::fromStdString(mod.summary),
                                   Tr("by %1, %2").arg(QString::fromStdString(mod.author),
                                                       QString::fromStdString(mod.licence))},
@@ -832,7 +807,6 @@ Page* MakeModsPage(const PageContext& context) {
                 }
             });
     };
-    QObject::connect(refresh, &QPushButton::clicked, page, [page] { page->reload(true); });
     QObject::connect(picker, &QComboBox::currentIndexChanged, page, [=] {
         *context.title = picker->currentData().toString().toStdString();
         page->reload(false);
@@ -844,16 +818,21 @@ Page* MakeNewsPage(const PageContext& context) {
     if (IsWfc(context.host->GetFamily())) {
         return NotHerePage(Tr("Wii and DS games have no news channel."));
     }
+    // Wii U and 3DS news reaches the console itself, on the network (UX spec §3.6).
+    if (context.host->GetFamily() == Family::WiiU) {
+        return NotHerePage(Tr("Wii U news lives in Miiverse, on the network."));
+    }
+    if (context.host->GetFamily() == Family::N3DS) {
+        return NotHerePage(Tr("3DS news arrives through Miiverse and SpotPass, on the network."));
+    }
     auto* page = new Page;
     QHBoxLayout* header = nullptr;
     QVBoxLayout* layout = Frame(page, header);
     auto* picker = new QComboBox;
-    QPushButton* refresh = TextButton(Tr("Refresh"));
     QPushButton* save = TextButton(Tr("Save to disk..."));
     save->setEnabled(false);
     header->addWidget(picker, 1);
     header->addWidget(save);
-    header->addWidget(refresh);
     QLabel* valid_from = DimLabel({});
     layout->addWidget(valid_from);
     auto* list = new RowList;
@@ -876,15 +855,13 @@ Page* MakeNewsPage(const PageContext& context) {
             list->Clear();
             *files = manifest.files;
             save->setEnabled(!files->empty());
-            const s64 from = QDateTime::fromString(QString::fromStdString(manifest.valid_from), Qt::ISODate)
-                                 .toSecsSinceEpoch();
-            valid_from->setText(manifest.ok && from > 0 ? Tr("From %1").arg(LocalTime(from)) : QString{});
+            const QString from = LocalTimeIso(manifest.valid_from);
+            valid_from->setText(manifest.ok && !from.isEmpty() ? Tr("From %1").arg(from) : QString{});
             if (files->empty()) {
                 list->AddEmpty(Tr("No news for this title."));
             }
             for (const Api::NewsFile& file : *files) {
-                list->AddRow(QString::fromStdString(file.path), {}, {},
-                             QLocale().formattedDataSize(static_cast<qint64>(file.size)));
+                list->AddRow(QString::fromStdString(file.path), {}, {}, Bytes(file.size));
             }
         });
     };
@@ -923,7 +900,6 @@ Page* MakeNewsPage(const PageContext& context) {
                 context.status(Tr("Saved %1 files to %2.").arg(written).arg(chosen));
             });
     });
-    QObject::connect(refresh, &QPushButton::clicked, page, [page] { page->reload(true); });
     QObject::connect(picker, &QComboBox::currentIndexChanged, page, [=] {
         *context.title = picker->currentData().toString().toStdString();
         page->reload(false);
@@ -995,11 +971,9 @@ Page* MakeStatusPage(const PageContext& context) {
     auto* page = new Page;
     QHBoxLayout* header = nullptr;
     QVBoxLayout* layout = Frame(page, header);
-    QLabel* players = DimLabel({});
-    QPushButton* refresh = TextButton(Tr("Refresh"));
-    header->addWidget(players, 1);
-    header->addWidget(refresh);
 
+    // The verdict card: a dot and the headline, the summary, when it was asked, and how many
+    // are playing.
     auto* verdict = new QFrame;
     verdict->setObjectName(QStringLiteral("row"));
     verdict->setStyleSheet(style::Card());
@@ -1011,61 +985,122 @@ Page* MakeStatusPage(const PageContext& context) {
     QLabel* headline = BoldLabel({}, 2);
     headline->setWordWrap(true);
     QLabel* summary = DimLabel({});
+    QLabel* refreshed = DimLabel({});
+    QLabel* players = DimLabel({});
     verdict_text->addWidget(headline);
     verdict_text->addWidget(summary);
+    verdict_text->addWidget(refreshed);
+    verdict_text->addWidget(players);
     verdict_layout->addLayout(verdict_text, 1);
     layout->addWidget(verdict);
 
     auto* columns = new QHBoxLayout;
     columns->setSpacing(12);
-    const auto column = [&](const QString& title) {
+    const auto column = [&](const QString& title, QVBoxLayout** box_out = nullptr) {
         auto* box = new QVBoxLayout;
         box->addWidget(BoldLabel(title, 1));
         auto* list = new RowList;
         box->addWidget(list, 1);
         columns->addLayout(box, 1);
+        if (box_out) {
+            *box_out = box;
+        }
         return list;
     };
     RowList* services = column(Tr("Services"));
-    RowList* session = column(Tr("This session"));
+    QVBoxLayout* session_box = nullptr;
+    RowList* session = column(Tr("This session"), &session_box);
     RowList* population = column(Tr("Players"));
     layout->addLayout(columns, 1);
 
+    // NAT type and Ping come from the connection test, which a person starts, at most once every
+    // 10 seconds; they read Not tested until then.
+    auto* probe = new ExternalReferenceProbe(page);
+    struct Test {
+        QString nat;
+        QString nat_detail;
+        int nat_state = 0; // 1 open, -1 strict, 0 unknown
+        QString ping;
+        int ping_state = 0;
+    };
+    auto test = std::make_shared<Test>();
+    test->nat = Tr("Not tested");
+    test->ping = Tr("Not tested");
+    QPushButton* test_button = TextButton(Tr("Test connection"));
+    session_box->addWidget(test_button);
+
     // This session's side is read here, on the UI thread, from state the library already holds.
-    const auto draw_session = [=](int edge, const std::string& address) {
+    auto edge_seen = std::make_shared<std::pair<int, std::string>>(-2, std::string{});
+    const auto draw_session = [=] {
+        const int edge = edge_seen->first;
+        const std::string& address = edge_seen->second;
         session->Clear();
         const bool signed_in = SignedIn();
         const std::string username = Common::OpenPakAccount::GetUsername();
         session->Add(StateRow(signed_in, Tr("OpenPak account"),
                               signed_in ? Tr("Signed in as %1")
-                                              .arg(username.empty() ? QStringLiteral("—")
+                                              .arg(username.empty() ? Tr("—")
                                                                     : QString::fromStdString(username))
                                         : Tr("Not signed in")));
-        const bool linked = client::session::Linked();
-        const std::string code = client::session::FriendCode();
-        session->Add(StateRow(linked, Tr("Console link"),
-                              linked ? Tr("Linked as %1 (%2)")
-                                           .arg(QString::fromStdString(client::session::Nickname()),
-                                                code.empty() ? QStringLiteral("—")
-                                                             : QString::fromStdString(code))
-                                     : Tr("No console account is linked.")));
+        if (IsWfc(context.host->GetFamily())) {
+            session->Add(StateRow(false, Tr("Console link"), Tr("No console account is linked.")));
+        } else {
+            const bool linked = client::session::Linked();
+            const std::string code = client::session::FriendCode();
+            session->Add(StateRow(linked, Tr("Console link"),
+                                  linked ? Tr("Linked as %1 (%2)")
+                                               .arg(QString::fromStdString(client::session::Nickname()),
+                                                    code.empty() ? Tr("—")
+                                                                 : QString::fromStdString(code))
+                                         : Tr("No console account is linked.")));
+        }
         const QString where = QString::fromStdString(address);
         session->Add(StateRow(edge >= 0, Tr("Console edge"),
-                              edge == -2   ? Tr("No console server is configured.")
+                              edge == -2   ? Tr("—")
                               : edge == -1 ? Tr("%1 did not answer").arg(where)
                                            : Tr("%1 answered in %2 ms").arg(where).arg(edge)));
         const bool beating = client::session::Beating();
-        const QString word = beating && linked ? PresenceWord(client::session::PresenceBody()) : QString{};
+        const QString word = beating && client::session::Linked()
+                                 ? PresenceWord(client::session::PresenceBody())
+                                 : QString{};
         session->Add(StateRow(!word.isEmpty(), Tr("Presence"),
                               word.isEmpty() ? Tr("Nothing published yet.")
                                              : Tr("Published as %1").arg(word)));
-        session->Add(StateRow(
-            beating, Tr("Notifications"),
-            beating ? Tr("Asked for every 30 seconds; %1 waiting. Nothing here holds a push "
-                         "connection.")
-                          .arg(static_cast<int>(client::session::Invitations().size()))
-                    : Tr("The session is not running, so nothing is asking.")));
+        session->Add(StateRow(beating, Tr("Notifications"), beating ? Tr("Up") : Tr("Down")));
+        QFrame* nat = StateRow(test->nat_state > 0, Tr("NAT type"), test->nat);
+        nat->setToolTip(test->nat_detail);
+        session->Add(nat);
+        session->Add(StateRow(test->ping_state > 0, Tr("Ping"), test->ping));
     };
+
+    QObject::connect(test_button, &QPushButton::clicked, page, [=] {
+        test_button->setEnabled(false);
+        QTimer::singleShot(10000, test_button, [test_button] { test_button->setEnabled(true); });
+        test->nat = Tr("Checking...");
+        test->ping = Tr("Checking...");
+        draw_session();
+        probe->ProbeNat();
+        probe->PingBackend();
+    });
+    QObject::connect(probe, &ExternalReferenceProbe::NatStatusChanged, page,
+                     [=](ExternalReferenceProbe::NatStatus nat) {
+                         using Nat = ExternalReferenceProbe::NatStatus;
+                         if (nat == Nat::Checking) {
+                             return;
+                         }
+                         const QString type = QString(probe->LastType());
+                         test->nat = nat == Nat::Open     ? Tr("Open") + QStringLiteral(" (%1)").arg(type)
+                                     : nat == Nat::Strict ? Tr("Strict") + QStringLiteral(" (%1)").arg(type)
+                                                          : Tr("—");
+                         test->nat_state = nat == Nat::Open ? 1 : nat == Nat::Strict ? -1 : 0;
+                         test->nat_detail = probe->LastDetail();
+                         draw_session();
+                     });
+    QObject::connect(probe, &ExternalReferenceProbe::PingResult, page, [=](int ms) {
+        test->ping = ms >= 0 ? Tr("%1 ms").arg(ms) : Tr("—");
+        test->ping_state = ms >= 0 ? 1 : 0;
+        draw_session();
+    });
 
     // Public: this answers even when the sign-in is the broken part.
     page->reload = [=](bool) {
@@ -1090,6 +1125,9 @@ Page* MakeStatusPage(const PageContext& context) {
                                             : Tr("The status box at %1 did not answer.")
                                                   .arg(QString::fromStdString(checks.url)));
                 summary->setText(QString::fromStdString(checks.sub));
+                summary->setVisible(!checks.sub.empty());
+                refreshed->setText(
+                    Tr("Refreshed %1").arg(LocalTime(QDateTime::currentSecsSinceEpoch())));
 
                 services->Clear();
                 for (const auto& service : checks.services) {
@@ -1101,27 +1139,28 @@ Page* MakeStatusPage(const PageContext& context) {
                         service.up ? Tr("Up") : Tr("Down")));
                 }
                 if (checks.services.empty()) {
-                    services->AddEmpty(Tr("No checks to show."));
+                    services->AddEmpty(Tr("—"));
                 }
 
-                draw_session(health.edge, health.address);
+                *edge_seen = {health.edge, health.address};
+                draw_session();
 
                 population->Clear();
                 if (!health.players.ok) {
                     players->setText(Tr("Could not reach %1.").arg(QString::fromStdString(Api::BaseUrl())));
                     return;
                 }
-                players->setText(QCoreApplication::translate("OpenPakAccountDialog", "%n player(s) online",
-                                                             nullptr, health.players.players_online));
+                players->setText(Tr("Players online: %1").arg(health.players.players_online));
+                // Every title and network with its count: what Citron's Population window showed.
                 for (const auto& [title_id, count] : health.players.titles) {
                     population->AddRow(NameOrUnknown(context.host, title_id), {}, {},
                                        QString::number(count));
                 }
                 for (const auto& [name, count] : health.players.networks) {
-                    population->AddRow(ConsoleName(name), {Tr("Network")}, {}, QString::number(count));
+                    population->AddRow(ConsoleName(name), {}, {}, QString::number(count));
                 }
                 if (health.players.titles.empty() && health.players.networks.empty()) {
-                    population->AddEmpty(Tr("Nobody is online right now."));
+                    population->AddEmpty(Tr("—"));
                 }
             });
     };
@@ -1136,7 +1175,6 @@ Page* MakeStatusPage(const PageContext& context) {
         }
     });
     timer->start();
-    QObject::connect(refresh, &QPushButton::clicked, page, [page] { page->reload(true); });
     return page;
 }
 

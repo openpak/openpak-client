@@ -12,6 +12,7 @@
 
 #include <QApplication>
 #include <QDateTime>
+#include <QIcon>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -28,6 +29,7 @@
 
 #include "openpak/account.h"
 #include "openpak/compatibility.h"
+#include "openpak/log.h"
 #include "openpak/qt/account_page_p.h"
 #include "openpak/qt/host.h"
 
@@ -87,10 +89,6 @@ void WorkQueue::Finished() {
     if (--in_flight == 0 && on_busy) {
         on_busy(false);
     }
-}
-
-QString Tr(const char* text) {
-    return QCoreApplication::translate("OpenPakAccountDialog", text);
 }
 
 QString GameName(Host* host, const std::string& title_id_hex) {
@@ -165,38 +163,44 @@ QString LocalTime(s64 unix_seconds) {
                               QLocale::ShortFormat);
 }
 
-namespace {
-QString Span(s64 seconds) {
-    if (seconds < 60) {
-        return Tr("less than a minute");
+s64 SecondsIso(const std::string& iso8601) {
+    if (iso8601.empty()) {
+        return 0;
     }
-    if (seconds < 3600) {
-        return QCoreApplication::translate("OpenPakAccountDialog", "%n minute(s)", nullptr,
-                                           static_cast<int>(seconds / 60));
-    }
-    if (seconds < 86400) {
-        return QCoreApplication::translate("OpenPakAccountDialog", "%n hour(s)", nullptr,
-                                           static_cast<int>(seconds / 3600));
-    }
-    return QCoreApplication::translate("OpenPakAccountDialog", "%n day(s)", nullptr,
-                                       static_cast<int>(seconds / 86400));
-}
-} // namespace
-
-QString Ago(s64 unix_seconds) {
-    if (unix_seconds <= 0) {
-        return {};
-    }
-    const s64 now = QDateTime::currentSecsSinceEpoch();
-    return Tr("%1 ago").arg(Span(std::max<s64>(0, now - unix_seconds)));
+    const QDateTime when = QDateTime::fromString(QString::fromStdString(iso8601), Qt::ISODate);
+    return when.isValid() ? when.toSecsSinceEpoch() : 0;
 }
 
-QString Until(s64 unix_seconds) {
-    if (unix_seconds <= 0) {
+QString LocalTimeIso(const std::string& iso8601) {
+    return LocalTime(SecondsIso(iso8601));
+}
+
+QString ErrorText(const std::string& error) {
+    if (error.empty()) {
         return {};
     }
-    const s64 left = unix_seconds - QDateTime::currentSecsSinceEpoch();
-    return left <= 0 ? Tr("expired") : Tr("in %1").arg(Span(left));
+    // The client library's own sentences, by what they say.
+    if (error == "Wrong email or password.") {
+        return Tr("Wrong email or password.");
+    }
+    if (error == "Too many attempts. Wait a minute and try again.") {
+        return Tr("Too many attempts. Wait a minute and try again.");
+    }
+    if (error.rfind("Could not reach ", 0) == 0) {
+        return Tr("Could not reach %1.").arg(QString::fromStdString(WebService::OpenPakApi::BaseUrl()));
+    }
+    if (error == "This build has no web services support.") {
+        return Tr("This build has no web services support.");
+    }
+    // Exception text and status codes are for the log, not for people.
+    const bool technical = error.find("HTTP ") != std::string::npos ||
+                           error.rfind("Unexpected ", 0) == 0 ||
+                           error.find("what()") != std::string::npos;
+    if (technical) {
+        OPENPAK_LOG_WARNING("OpenPak request failed: {}", error);
+        return Tr("OpenPak said: %1").arg(Tr("Something went wrong. Try again in a moment."));
+    }
+    return Tr("OpenPak said: %1").arg(QString::fromStdString(error));
 }
 
 QString Bytes(u64 size) {
@@ -363,15 +367,80 @@ QPushButton* TextButton(const QString& text) {
     return button;
 }
 
-QToolButton* IconButton(const QString& glyph, const QString& tooltip) {
+QIcon Icon(const char* name) {
+    // The freedesktop names first (Linux themes), then the closest standard pixmap the style
+    // draws on every platform.
+    struct Choice {
+        const char* name;
+        std::initializer_list<const char*> theme;
+        QStyle::StandardPixmap fallback;
+    };
+    static const Choice choices[] = {
+        {"account", {"avatar-default", "user-identity", "im-user"}, QStyle::SP_DirHomeIcon},
+        {"friends", {"system-users", "user-group", "users"}, QStyle::SP_FileDialogContentsView},
+        {"invitations", {"mail-message", "mail-unread", "mail-read"}, QStyle::SP_MessageBoxInformation},
+        {"saves", {"cloud-upload", "folder-cloud", "document-save"}, QStyle::SP_DialogSaveButton},
+        {"mods", {"application-x-addon", "extension", "plugins"}, QStyle::SP_FileDialogDetailedView},
+        {"news", {"news-subscribe", "application-rss+xml", "text-x-generic"}, QStyle::SP_FileIcon},
+        {"status", {"network-wireless-signal-excellent", "network-wireless", "network-transmit-receive"},
+         QStyle::SP_DriveNetIcon},
+        {"settings", {"preferences-system", "configure", "settings"}, QStyle::SP_FileDialogListView},
+        {"website", {"internet-web-browser", "applications-internet", "web-browser"},
+         QStyle::SP_DriveNetIcon},
+        {"sign-out", {"system-log-out", "application-exit"}, QStyle::SP_DialogCloseButton},
+        {"accept", {"dialog-ok-apply", "dialog-ok", "object-select"}, QStyle::SP_DialogApplyButton},
+        {"decline", {"dialog-cancel", "window-close"}, QStyle::SP_DialogCancelButton},
+        {"remove", {"list-remove-user", "user-trash", "edit-delete"}, QStyle::SP_TrashIcon},
+        {"block", {"action-unavailable", "dialog-error", "process-stop"}, QStyle::SP_BrowserStop},
+        {"edit", {"document-edit", "edit-rename", "accessories-text-editor"}, QStyle::SP_FileDialogDetailedView},
+        {"picture", {"insert-image", "image-x-generic"}, QStyle::SP_FileIcon},
+        {"copy", {"edit-copy"}, QStyle::SP_FileLinkIcon},
+    };
+    for (const Choice& choice : choices) {
+        if (qstrcmp(choice.name, name) != 0) {
+            continue;
+        }
+        for (const char* theme : choice.theme) {
+            if (QIcon::hasThemeIcon(QString::fromLatin1(theme))) {
+                return QIcon::fromTheme(QString::fromLatin1(theme));
+            }
+        }
+        return QApplication::style()->standardIcon(choice.fallback);
+    }
+    return {};
+}
+
+QToolButton* IconButton(const char* icon, const QString& tooltip) {
     auto* button = new QToolButton;
-    button->setText(glyph);
+    button->setIcon(Icon(icon));
+    button->setIconSize(QSize(18, 18));
     button->setToolTip(tooltip);
     button->setAccessibleName(tooltip);
     button->setCursor(Qt::PointingHandCursor);
     button->setAutoRaise(true);
     button->setMinimumSize(30, 30);
+    if (button->icon().isNull()) {
+        button->setText(tooltip); // words, never an emoji, when the style has no picture either
+    }
     return button;
+}
+
+QWidget* NeedSignIn(Host* host) {
+    auto* box = new QWidget;
+    auto* layout = new QVBoxLayout(box);
+    layout->addStretch(1);
+    QLabel* words = DimLabel(Tr("Sign in to OpenPak to use this."));
+    words->setAlignment(Qt::AlignCenter);
+    layout->addWidget(words);
+    QPushButton* sign_in = TextButton(Tr("Sign in..."));
+    QObject::connect(sign_in, &QPushButton::clicked, box, [host] {
+        if (host) {
+            host->SignIn();
+        }
+    });
+    layout->addWidget(sign_in, 0, Qt::AlignHCenter);
+    layout->addStretch(1);
+    return box;
 }
 
 ClickCard::ClickCard(QWidget* parent) : QFrame(parent) {
@@ -463,6 +532,12 @@ void RowList::AddEmpty(const QString& text) {
     label->setAlignment(Qt::AlignCenter);
     label->setContentsMargins(0, 24, 0, 24);
     Add(label);
+}
+
+void RowList::AddNeedSignIn(Host* host) {
+    QWidget* box = NeedSignIn(host);
+    box->setContentsMargins(0, 24, 0, 24);
+    Add(box);
 }
 
 void RowList::AddHeading(const QString& text) {
