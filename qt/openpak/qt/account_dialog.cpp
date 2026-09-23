@@ -54,6 +54,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "openpak/crash_reports.h"
 #include "openpak/platform.h"
 #include "openpak/account.h"
 #include "openpak/qt/host.h"
@@ -1066,6 +1067,23 @@ QWidget* OpenPakAccountDialog::MakeAccountPage() {
     notification_corner->on_popup_closed = [this] { active_popup = nullptr; };
     notification_corner->on_changed = [this](int index) { controller->SetNotificationCorner(index); };
     settings_row(tr("Corner"), notification_corner);
+    // Crash reports: what the next launch does with one (openpak/crash_reports.h).
+    auto* crash_reports = new OpenPakDropdown;
+    {
+        const std::string policy = openpak::CrashReports::Policy();
+        crash_reports->SetValues({tr("Ask"), tr("Always send"), tr("Never send")},
+                                 policy == openpak::CrashReports::kAlways  ? 1
+                                 : policy == openpak::CrashReports::kNever ? 2
+                                                                           : 0);
+    }
+    crash_reports->on_popup_opened = [this](QWidget* popup) { active_popup = popup; };
+    crash_reports->on_popup_closed = [this] { active_popup = nullptr; };
+    crash_reports->on_changed = [](int index) {
+        openpak::CrashReports::SetPolicy(index == 1   ? openpak::CrashReports::kAlways
+                                         : index == 2 ? openpak::CrashReports::kNever
+                                                      : openpak::CrashReports::kAsk);
+    };
+    settings_row(tr("Crash reports"), crash_reports);
     settings_layout->addStretch(1);
 
     auto* right_column = new QVBoxLayout;

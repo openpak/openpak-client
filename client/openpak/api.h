@@ -68,6 +68,10 @@ LoginResult SignInAccountOnly(const std::string& email, const std::string& passw
 // Fetches the OpenPak CA over public TLS and stores it for the SSL service. Best effort.
 bool FetchCA();
 
+// POST /api/v1/crash-reports with a body openpak/crash_reports.h built; the HTTP status, or 0
+// when the request never got an answer.
+int PostCrashReport(const std::string& body, const std::string& content_type);
+
 
 // Uses the stored account token. Answers only about the caller's own account.
 OnlineStatus GetOnlineStatus();

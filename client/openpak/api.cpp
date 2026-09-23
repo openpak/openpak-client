@@ -1480,6 +1480,14 @@ std::optional<int> PingBackend() {
     return static_cast<int>(elapsed_ms.count());
 }
 
+int PostCrashReport(const std::string& body, const std::string& content_type) {
+    // The bearer when there is one, so the site can tell whose report it is. A 401 here does not
+    // sign anybody out: a crash report is not the place to find out a token has lapsed.
+    const auto result = Send("POST", "/api/v1/crash-reports", body,
+                             Common::OpenPakAccount::GetBearer(), {}, content_type);
+    return result ? result->status : 0;
+}
+
 #if defined(__cpp_lib_span)
 std::string PushSave(const std::string& title_id_hex, std::span<const u8> data) {
     return PushSave(title_id_hex, data.data(), data.size());
