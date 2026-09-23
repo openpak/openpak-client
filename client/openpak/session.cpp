@@ -33,7 +33,9 @@
 #include "openpak/log.h"
 #include "openpak/platform.h"
 #include "openpak/presence_state.h"
+#include "openpak/push.h"
 #include "openpak/session.h"
+#include "openpak/session_detail.h"
 
 namespace openpak::client::session {
 
@@ -841,8 +843,9 @@ bool FollowProfile(State& state) {
     state.dismissed.clear();
 
     // Another profile is another BAAS user: nothing the guest's friends module cached for the
-    // last one may be read as this one's.
+    // last one may be read as this one's, and its push connection is not this one's either.
     openpak::baas::Detach();
+    push::Drop();
 
     if (!state.server_host.empty()) {
         LoadDeviceAccount(state);
@@ -851,6 +854,19 @@ bool FollowProfile(State& state) {
     OPENPAK_LOG_INFO("[OpenPak] The active profile changed; signing its own account in");
 
     return true;
+}
+
+std::unique_ptr<httplib::SSLClient> detail::MakeClientFor(const std::string& host) {
+    State& state = Get();
+    const Endpoint endpoint = EndpointSnapshot(state);
+    EnsureClientCertificate(endpoint);
+    return MakeClient(endpoint, host.c_str());
+}
+
+std::string detail::ServerKey() {
+    State& state = Get();
+    std::lock_guard lock{state.mutex};
+    return state.server_host.empty() ? std::string{} : ::openpak::client::session::ServerKey(state);
 }
 
 void Configure(std::string server_host, int port, std::string ca_path) {
@@ -1293,6 +1309,9 @@ void StartHeartbeat(std::function<std::string()> current_title_id) {
         return;
     }
 
+    // Pushed changes arrive between beats; the beat below stays as the fallback.
+    push::Start();
+
     state.heartbeat = std::thread([&state] {
         using Clock = std::chrono::steady_clock;
         Clock::time_point next_beat = Clock::now() + std::chrono::seconds(HeartbeatSeconds);
@@ -1422,10 +1441,14 @@ void ForgetProfile(const std::string& profile) {
             std::filesystem::remove(entry.path(), ec);
         }
     }
+
+    push::ForgetProfile(profile);
 }
 
 void GoOffline() {
     State& state = Get();
+
+    push::Stop();
 
     if (state.heartbeat_running.exchange(false)) {
         state.heartbeat_wake.notify_all();
