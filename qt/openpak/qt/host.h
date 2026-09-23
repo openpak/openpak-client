@@ -114,7 +114,6 @@ signals:
     void FriendInvitationReceived(u64 from_pid, QString from_name);
     void StatusChanged(QString message);
     void QuickStartRequested(u64 title_id);
-    void SignInUrlReady(QString url);
     void SignInFinished();
     void ChatInviteReceived(QString room_id, QString room_name, u64 from_pid, QString from_name);
     void ChatInviteSent(u64 target_pid);

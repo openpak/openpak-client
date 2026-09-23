@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <map>
+#include <string>
 #include <vector>
 
 #include <QPixmap>
@@ -69,6 +71,10 @@ struct InvitationCard {
     QString message;
 };
 bool OfferInvitation(QWidget* parent, const InvitationCard& card);
+
+// What the sender's game wrote, in the language the UI speaks: the exact tag, then the language
+// alone, then English, then whatever the game wrote. Empty for no message.
+QString InvitationMessage(const std::map<std::string, std::string>& messages);
 
 // "Choose a save" for a title whose local and cloud saves never met.
 enum class SaveChoice { Later, KeepLocal, TakeCloud };

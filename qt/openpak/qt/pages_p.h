@@ -136,11 +136,6 @@ QString LocalTimeIso(const std::string& iso8601);
 s64 SecondsIso(const std::string& iso8601);
 QString Bytes(u64 size);
 
-// What the client library's English error means, in the table's words (UX spec §3.12): the known
-// ones by their key, a sentence the server wrote behind "OpenPak said:", and anything else --
-// exception text, HTTP codes -- to the log only, with the plain server error in its place.
-QString ErrorText(const std::string& error);
-
 // The icon a page, a setting or an action wears everywhere (UX spec §6): the desktop theme's,
 // else the closest one the style has. Names: account, friends, invitations, saves, mods, news,
 // status, settings, website, sign-out, accept, decline, remove, block, edit, picture, copy.

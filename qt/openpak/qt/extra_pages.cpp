@@ -160,31 +160,6 @@ QFrame* StateRow(bool up, const QString& name, const QString& detail, const QStr
     return row;
 }
 
-// The invitation's words in the language the UI speaks: the exact tag, then the language alone,
-// then English, then whatever the game wrote.
-QString MessageFor(const std::map<std::string, std::string>& messages) {
-    if (messages.empty()) {
-        return {};
-    }
-    const std::string tag = QLocale().bcp47Name().toStdString();
-    const std::string language = tag.substr(0, tag.find('-'));
-    const auto starts = [](const std::string& text, const std::string& prefix) {
-        return text.size() >= prefix.size() &&
-               std::equal(prefix.begin(), prefix.end(), text.begin(), [](char a, char b) {
-                   return std::tolower(static_cast<unsigned char>(a)) ==
-                          std::tolower(static_cast<unsigned char>(b));
-               });
-    };
-    for (const std::string& wanted : {tag, language, std::string{"en-US"}, std::string{"en"}}) {
-        for (const auto& [key, text] : messages) {
-            if (starts(key, wanted) && (key.size() == wanted.size() || key[wanted.size()] == '-')) {
-                return QString::fromStdString(text);
-            }
-        }
-    }
-    return QString::fromStdString(messages.begin()->second);
-}
-
 #ifdef OPENPAK_HAVE_LIBARCHIVE
 // Unpack a verified package into dir, replacing what was there. False -- and nothing left
 // behind -- when an entry names its way out of dir: the package came off the network.
@@ -368,7 +343,7 @@ Page* MakeInvitationsPage(const PageContext& context) {
                         [id = one.id] { return Api::DeclineInvitation(id); });
                 }
                 for (const auto& one : waiting.native) {
-                    add(one.sender_name, one.title_id, MessageFor(one.messages),
+                    add(one.sender_name, one.title_id, InvitationMessage(one.messages),
                         one.expires_at > 0   ? Tr("Expires %1").arg(LocalTime(one.expires_at))
                         : one.created_at > 0 ? Tr("Sent %1").arg(LocalTime(one.created_at))
                                              : QString{},

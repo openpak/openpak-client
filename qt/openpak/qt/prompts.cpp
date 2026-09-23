@@ -4,6 +4,7 @@
 #include "openpak/qt/prompts.h"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 
 #include <QAbstractButton>
@@ -20,6 +21,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -376,6 +378,29 @@ bool OfferInvitation(QWidget* parent, const InvitationCard& card) {
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
     return Run(dialog) == QDialog::Accepted;
+}
+
+QString InvitationMessage(const std::map<std::string, std::string>& messages) {
+    if (messages.empty()) {
+        return {};
+    }
+    const std::string tag = QLocale().bcp47Name().toStdString();
+    const std::string language = tag.substr(0, tag.find('-'));
+    const auto starts = [](const std::string& text, const std::string& prefix) {
+        return text.size() >= prefix.size() &&
+               std::equal(prefix.begin(), prefix.end(), text.begin(), [](char a, char b) {
+                   return std::tolower(static_cast<unsigned char>(a)) ==
+                          std::tolower(static_cast<unsigned char>(b));
+               });
+    };
+    for (const std::string& wanted : {tag, language, std::string{"en-US"}, std::string{"en"}}) {
+        for (const auto& [key, text] : messages) {
+            if (starts(key, wanted) && (key.size() == wanted.size() || key[wanted.size()] == '-')) {
+                return QString::fromStdString(text);
+            }
+        }
+    }
+    return QString::fromStdString(messages.begin()->second);
 }
 
 SaveChoice ChooseSave(QWidget* parent, const ConflictSides& sides) {

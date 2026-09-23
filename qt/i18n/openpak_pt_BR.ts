@@ -1049,5 +1049,17 @@ Last error: %1</source>
         <source>Don't send</source>
         <translation>Não enviar</translation>
     </message>
+    <message>
+        <source>That friend is not in a game you can join right now.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Start the game first, then join from here.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Joining %1's game.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 </TS>

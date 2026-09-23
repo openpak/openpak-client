@@ -37,7 +37,10 @@ QMenu* AddOpenPakMenu(QMenuBar* menu_bar, MenuHooks hooks) {
 }
 
 void PopulateOpenPakMenu(QMenu* menu, MenuHooks hooks_) {
-    menu->setTitle(Tr("OpenPak"));
+    // A host's own title stays (its accelerator, "&OpenPak"); an untitled menu gets the spec's.
+    if (menu->title().isEmpty()) {
+        menu->setTitle(Tr("OpenPak"));
+    }
     menu->setToolTipsVisible(true);
     auto hooks = std::make_shared<MenuHooks>(std::move(hooks_));
     QObject::connect(menu, &QMenu::aboutToShow, menu, [menu, hooks] {

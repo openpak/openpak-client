@@ -268,5 +268,8 @@
   "crash.body": "The emulator crashed last time. Send the report to OpenPak to help fix it? Reports saved: {0}",
   "crash.details": "A report holds the emulator version, your OS, the game that was running and the last lines of the log. If you are signed in, it is sent with your account.\n\nLast error: {0}",
   "crash.send": "Send",
-  "crash.dont_send": "Don't send"
+  "crash.dont_send": "Don't send",
+  "friends.join_unavailable": "That friend is not in a game you can join right now.",
+  "friends.join_start_first": "Start the game first, then join from here.",
+  "friends.joining": "Joining {0}'s game."
 }

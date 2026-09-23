@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <QString>
 
 namespace openpak::qt {
@@ -16,6 +18,11 @@ namespace openpak::qt {
 // Only a literal from strings/en.json belongs here: tools/strings/generate.py check says which
 // are not.
 QString Tr(const char* english);
+
+// What the client library's English error means, in the table's words (UX spec §3.12): the known
+// ones by their key, a sentence the server wrote behind "OpenPak said:", and anything else --
+// exception text, HTTP codes -- to the log only, with a plain sentence in its place.
+QString ErrorText(const std::string& error);
 
 // Loads the OpenPak translation for a language ("de", "pt_BR"; empty for the system's) beside
 // the host's own translator, replacing the one loaded before. English needs none. False when the
