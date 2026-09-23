@@ -27,6 +27,7 @@
 
 #include "openpak/account.h"
 #include "openpak/api.h"
+#include "openpak/baas.h"
 #include "openpak/friends_cache.h"
 #include "openpak/log.h"
 #include "openpak/platform.h"
@@ -569,6 +570,12 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
         state.application_token = user_token;
     }
 
+    // The guest's friends module speaks to BAAS through this session: the REST surface the
+    // sysmodule itself uses (§A), as this user.
+    if (!state.user_id.empty()) {
+        openpak::baas::Attach(state.user_id);
+    }
+
     OPENPAK_LOG_INFO("[OpenPak] Signed in as {} on {}",
                      state.nickname.empty() ? state.device_id : state.nickname, state.server_host);
 
@@ -744,6 +751,10 @@ bool FollowProfile(State& state) {
     state.invitations.clear();
     state.sender_names.clear();
     state.dismissed.clear();
+
+    // Another profile is another BAAS user: nothing the guest's friends module cached for the
+    // last one may be read as this one's.
+    openpak::baas::Detach();
 
     if (!state.server_host.empty()) {
         LoadDeviceAccount(state);
@@ -1062,6 +1073,49 @@ void DismissInvitation(const std::string& invitation_id) {
 
     if (!result || result->status != 200) {
         OPENPAK_LOG_DEBUG("[OpenPak] Marking invitation {} read did not land", invitation_id);
+    }
+}
+
+Response SendAs(const std::string& method, const std::string& host,
+                const std::string& path_and_query, const std::string& content_type,
+                const std::string& body) {
+    try {
+        Ensure();
+
+        State& state = Get();
+        std::string token;
+        {
+            std::lock_guard lock{state.mutex};
+            token = state.application_token;
+        }
+
+        if (token.empty()) {
+            return {};
+        }
+
+        httplib::Request request;
+        request.method = method;
+        request.path = path_and_query;
+        request.headers = Bearer(token);
+
+        if (!content_type.empty()) {
+            request.set_header("Content-Type", content_type + "; charset=utf-8");
+            request.body = body;
+        }
+
+        auto client = MakeClient(EndpointSnapshot(state), host.c_str());
+        const httplib::Result result = client->send(request);
+
+        if (!result) {
+            OPENPAK_LOG_DEBUG("[OpenPak] {} {}{} did not reach the server: {}", method, host,
+                              path_and_query, httplib::to_string(result.error()));
+            return {};
+        }
+
+        return {result->status, result->body};
+    } catch (const std::exception& e) {
+        OPENPAK_LOG_DEBUG("[OpenPak] {} {}{}: {}", method, host, path_and_query, e.what());
+        return {};
     }
 }
 

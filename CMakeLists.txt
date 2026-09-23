@@ -63,7 +63,7 @@ endif()
 # with no Qt and no libarchive in them, so a build without Qt still runs them.
 if(BUILD_TESTING OR CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   enable_testing()
-  foreach(check contained_path profile_account)
+  foreach(check contained_path profile_account baas)
     add_executable(${check}_test tests/${check}_test.cpp)
     target_link_libraries(${check}_test PRIVATE openpak::client)
     add_test(NAME ${check} COMMAND ${check}_test)
