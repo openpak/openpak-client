@@ -22,7 +22,6 @@
 
 #include <fmt/format.h>
 
-#include "openpak/compatible_titles.h"
 #include "openpak/log.h"
 #include "openpak/account.h"
 
@@ -44,9 +43,10 @@ namespace {
 // Only ever called from the real-backend paths below (libarchive, or the Windows PowerShell
 // fallback) -- kept inside this guard so an unused-function error doesn't fire on builds with
 // neither (e.g. a non-Windows build without libarchive).
-bool IsEligible(u64 title_id) {
-    return OpenPak::CompatibleTitles::Table().count(title_id) != 0 &&
-          Common::OpenPakAccount::IsLinked();
+// Every title with a signed-in account, as Ryujinx does: the old compatibility table only pins
+// the versions a title's online play needs, and says nothing about whether its save may sync.
+bool IsEligible(u64 /*title_id*/) {
+    return Common::OpenPakAccount::IsLinked();
 }
 
 #endif // OPENPAK_HAVE_LIBARCHIVE || _WIN32
