@@ -124,6 +124,10 @@ void StartHeartbeat(std::function<std::string()> current_title_id);
 /// online-play session (friend:u 10600/10601/10610), with the appField it set.
 void SetRunningApplication(std::uint64_t application_id, std::uint64_t presence_group_id);
 
+/// Whether the heartbeat is running and has a signed-in user to beat for: what the status page
+/// means by "something is asking for notifications".
+bool Beating();
+
 /// The JSON-Patch body presence would publish right now for the active profile (PresencePatch of
 /// PresenceState::Current).
 std::string PresenceBody();

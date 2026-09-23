@@ -1393,6 +1393,10 @@ void SetRunningApplication(std::uint64_t application_id, std::uint64_t presence_
     state.heartbeat_wake.notify_all();
 }
 
+bool Beating() {
+    return Get().heartbeat_running.load() && !UserId().empty();
+}
+
 std::string PresenceBody() {
     return openpak::friends::PresencePatch(
         openpak::friends::PresenceState::Instance().Current(Platform::ProfileId()));
