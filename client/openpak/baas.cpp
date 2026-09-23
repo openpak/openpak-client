@@ -664,6 +664,12 @@ int SyncBlockList() {
     return Ok;
 }
 
+void detail::ReplaceBlocks(std::vector<Block> blocks) {
+    State& state = Get();
+    std::lock_guard lock{state.mutex};
+    state.blocks = std::make_shared<const std::vector<Block>>(std::move(blocks));
+}
+
 // ---- the caller's own user (§A.6) ----
 
 std::optional<UserSetting> OwnUserSetting() {

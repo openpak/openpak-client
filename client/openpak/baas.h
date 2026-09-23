@@ -167,6 +167,23 @@ std::shared_ptr<const std::vector<Block>> Blocks();
 /// fails the whole parse, as it does on the console.
 int SyncBlockList();
 
+/// The reason string a block carries, by the number the IPC call names it with (1-4), or null.
+const char* BlockReason(int reason);
+
+/// The POST body (§A.8): {"targetUserId":"%016llx","extras":{"self":{"reason":...}}}, plus the
+/// route keys when the block came from inside a title (30401/30403).
+std::string BlockBody(std::uint64_t target_id, const std::string& reason,
+                      const std::optional<Route>& route);
+
+/// POST /1.0.0/users/<me>/blocks. The block is cached before the request leaves; a success
+/// re-syncs blocks, the friend list and the request boxes. Remaps 2031 -> 2213, 2061 -> 2701.
+/// Blocks for a round trip or more: hand it to RunInBackground from a guest command.
+int BlockUser(std::uint64_t target_id, int reason, const std::optional<Route>& route);
+
+/// DELETE /1.0.0/users/<me>/blocks/<id>. One the server does not know (404, 2220-2229) is
+/// removed locally and reported as 2121-2711. Blocks, as above.
+int UnblockUser(std::uint64_t target_id);
+
 // ---- the caller's own user (§A.6) ----
 
 /// The caller's own user as of the last sync.

@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -28,6 +29,9 @@ Reply Send(const std::string& method, const std::string& host, const std::string
 inline std::string Dump(const Json& value) {
     return value.dump(-1, ' ', false, Json::error_handler_t::replace);
 }
+
+/// Replace the cached block list with `blocks` (the local half of a block or unblock).
+void ReplaceBlocks(std::vector<Block> blocks);
 
 /// An id as the module writes one, %016llx.
 inline std::string Hex16(std::uint64_t value) {

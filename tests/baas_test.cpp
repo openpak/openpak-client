@@ -609,6 +609,58 @@ void UsersAndBlocks() {
     assert(sent.size() == 3 && baas::CachedUser(8));
 }
 
+void BlockCalls() {
+    Reset();
+
+    // The body: targetUserId and the reason, plus the route keys for an in-app block.
+    const Json plain = Parse(baas::BlockBody(0xaaaaaaaaaaaa0002, "BAD_FRIEND", std::nullopt));
+    assert(plain["targetUserId"] == "aaaaaaaaaaaa0002");
+    assert(plain["extras"]["self"].size() == 1 && plain["extras"]["self"]["reason"] == "BAD_FRIEND");
+
+    baas::Route route;
+    route.application_id = 0x0100a5a020d5e000;
+    route.acd_index = 1;
+    route.presence_group_id = 0x0100a5a020d5e000;
+    route.name = "Leia";
+    route.language = "en-US";
+    const Json in_app = Parse(baas::BlockBody(5, "IN_APP", route))["extras"]["self"];
+    assert(in_app["route:appInfo:appId"] == "0100a5a020d5e000");
+    assert(in_app["route:appInfo:acdIndex"] == 1);
+    assert(in_app["route:name:language"] == "en-US");
+
+    // A block posts, then re-syncs blocks, the friend list and both request boxes.
+    Answer(201, "{}");
+    Answer(200, R"({"items":[{"targetUserId":"aaaaaaaaaaaa0002","targetUser":{"nickname":"Leia"},"extras":{"self":{"reason":"BAD_FRIEND"}}}]})");
+    Answer(200, R"({"items":[]})");
+    Answer(200, R"({"items":[]})");
+    Answer(200, R"({"items":[]})");
+    assert(baas::BlockUser(0xaaaaaaaaaaaa0002, 2, std::nullopt) == baas::Ok);
+    assert(sent[0].method == "POST" && sent[0].path == "/1.0.0/users/00000000000000aa/blocks");
+    assert(sent[0].content_type == "application/json");
+    assert(sent[1].path.find("/blocks?count=100") != std::string::npos);
+    assert(sent[2].path.find("/friends?count=300") != std::string::npos);
+    assert(sent[3].path.find("friend_requests/inbox") != std::string::npos);
+    assert(baas::Blocks()->size() == 1 && baas::Blocks()->front().reason == 2);
+
+    // Refused: remapped, and the optimistic entry goes with the re-sync.
+    Reset();
+    Answer(409, R"({"status":409,"errorCode":"resource_already_exists"})");
+    Answer(200, R"({"items":[]})");
+    assert(baas::BlockUser(7, 1, std::nullopt) == 2701);
+    assert(baas::Blocks()->empty());
+
+    // A reason outside the table never leaves.
+    sent.clear();
+    assert(baas::BlockUser(7, 9, std::nullopt) == baas::InvalidArgument);
+    assert(sent.empty());
+
+    // Unblocking one the server does not know is 2711, with nothing after it.
+    Answer(404, R"({"status":404,"errorCode":"resource_is_not_found"})");
+    assert(baas::UnblockUser(7) == 2711);
+    assert(sent.size() == 1 && sent[0].method == "DELETE" &&
+           sent[0].path == "/1.0.0/users/00000000000000aa/blocks/0000000000000007");
+}
+
 void OwnUser() {
     Reset();
 
@@ -938,6 +990,7 @@ int main() {
     NotSignedIn();
     FriendListSync();
     UsersAndBlocks();
+    BlockCalls();
     OwnUser();
     InvitationCalls();
     FriendRequestCalls();
