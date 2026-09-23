@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Each profile is its own account: the one from before profiles goes to the first profile to ask,
 // a switch shows the other profile's account, and one account is found on one profile only.
+#undef NDEBUG // the checks are the point of this binary, in every build type
 #include <cassert>
 #include <filesystem>
 #include <string>
