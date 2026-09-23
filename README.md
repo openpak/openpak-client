@@ -14,10 +14,21 @@ PRD: `Openpak/emulators/prds/emulator-integration-prd.md`.
   `Platform` set-up call for its directories and an optional log sink. libcurl-free: cpp-httplib
   over OpenSSL, nlohmann/json, fmt. The saves API path segment and device name are the host's
   choice (`SetSavesPlatform`/`SetSaveDevice`: `wii` and `ds` beside `citron`).
-- `qt/` — `openpak::qt`: the account dialog (home, friends, players, history, cloud saves,
-  invitations, mods, news, status), the sign-in dialog, delegates, avatar cache, toasts, online counts, save sync, network probe, chat client. A host
-  implements one interface, `openpak::qt::Host` (`qt/openpak/qt/host.h`): game names and
-  icons, launching, settings, the save directory of a title, gamepad navigation.
+- `qt/` — `openpak::qt`: everything `emulators/prds/openpak-ux-spec.md` has every Qt host show
+  the same way. The OpenPak window (Account, Friends, Invitations, Cloud saves, Mods, News,
+  Status), the OpenPak menu (`host_kit.h`), the sign-in dialog, the shared prompts
+  (`prompts.h`: setup and connect, profile picker, sign-out, invitation, save conflict), the
+  friend picker, the settings section (`settings_section.h`) and the toasts; also the avatar
+  cache, online counts, save sync, network probe and chat client. A host implements one
+  interface, `openpak::qt::Host` (`qt/openpak/qt/host.h`): game names and icons, launching,
+  settings, the save directory of a title, gamepad navigation.
+- `strings/` — the words (UX spec §7): `en.json` is the English table, `{lang}.json` the
+  translations. `tools/strings/generate.py` turns them into each toolkit's files: `qt` writes
+  `qt/i18n/openpak_{lang}.ts`, which the library compiles in (with Qt's LinguistTools) and a host
+  loads with `openpak::qt::LoadTranslations(language)`; `ryujinx`, `android` and `po` write
+  Ryujinx's locale JSON, Android's `strings.xml` and wx's `.po`; `seed` fills translations from
+  the phone app's ARB files, and `check` lists any `Tr("...")` in the library that is not in the
+  table.
 
 ```sh
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release   # -DOPENPAK_BUILD_QT=OFF for the client only
