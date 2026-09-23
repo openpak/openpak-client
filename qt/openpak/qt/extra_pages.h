@@ -1,26 +1,23 @@
 // SPDX-FileCopyrightText: Copyright 2026 OpenPak
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// The account dialog's pages that are lists of rows with buttons rather than delegate-drawn
-// views: invitations, mods, news, status. Each refreshes itself when it is shown and reports
-// through the dialog's one status line.
+// The account dialog's pages after the Account page, in the reference's order: Friends,
+// Invitations, Cloud saves, Mods, News, Status. Each is handed the window's context (the one work
+// queue, the status line, the confirmation card) and reloads itself when the dialog asks: every
+// page when the window opens, and the page that is shown each time it is navigated to.
 
 #pragma once
 
-#include <functional>
-#include <QString>
-
-class QWidget;
-
 namespace openpak::qt {
 
-class Host;
+class Page;
+struct PageContext;
 
-using StatusSink = std::function<void(const QString&)>;
-
-QWidget* MakeInvitationsPage(Host* host, StatusSink status);
-QWidget* MakeModsPage(Host* host, StatusSink status);
-QWidget* MakeNewsPage(Host* host, StatusSink status);
-QWidget* MakeStatusPage(Host* host, StatusSink status);
+Page* MakeFriendsPage(const PageContext& context);
+Page* MakeInvitationsPage(const PageContext& context);
+Page* MakeSavesPage(const PageContext& context);
+Page* MakeModsPage(const PageContext& context);
+Page* MakeNewsPage(const PageContext& context);
+Page* MakeStatusPage(const PageContext& context);
 
 } // namespace openpak::qt
