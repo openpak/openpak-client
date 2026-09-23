@@ -50,6 +50,10 @@ public:
     virtual QString JoinFriendSession(u64 pid) = 0;
     virtual void EnsureChatConnected() = 0;
     virtual OpenPakChatClient* GetChatClient() = 0;
+    // A host's own chat experiment (Citron's), outside the OpenPak spec: the Friends page offers
+    // ChatInviteText() in a friend's menu only while this is true.
+    virtual bool ChatEnabled() const { return false; }
+    virtual QString ChatInviteText() const { return {}; }
 
     // titles
     virtual QString ResolveGameName(const std::string& app_id_hex, const std::string& hint_name = {}) const = 0;

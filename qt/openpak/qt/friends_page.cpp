@@ -5,6 +5,7 @@
 // as a card that opens to show what they are playing and since when, and every action by the
 // account id the website keys friends on.
 
+#include <algorithm>
 #include <memory>
 #include <set>
 
@@ -12,7 +13,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
-#include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollBar>
@@ -83,13 +83,12 @@ Page* MakeFriendsPage(const PageContext& context) {
 
     auto* header = new QHBoxLayout;
     auto* code = new QLineEdit;
-    code->setPlaceholderText(QStringLiteral("SW-0000-0000-0000"));
+    code->setPlaceholderText(Tr("Friend code"));
+    code->setAccessibleName(Tr("Friend code"));
     QPushButton* add = TextButton(Tr("Add"));
     add->setMinimumWidth(90);
-    QPushButton* refresh = TextButton(Tr("Refresh"));
     header->addWidget(code, 1);
     header->addWidget(add);
-    header->addWidget(refresh);
     layout->addLayout(header);
 
     // Wii and DS games keep their own friend codes: OpenPak's list is shown for presence only,
@@ -124,7 +123,7 @@ Page* MakeFriendsPage(const PageContext& context) {
     // service come from the host's cache, so that is refreshed too.
     const auto mutate = [page, context](std::function<std::string()> work, QString done_text = {}) {
         context.queue->Run(page, std::move(work), [page, context, done_text](std::string failure) {
-            context.status(failure.empty() ? done_text : QString::fromStdString(failure));
+            context.status(failure.empty() ? done_text : ErrorText(failure));
             if (failure.empty() && context.host) {
                 context.host->RefreshFriendCache();
             }
@@ -141,7 +140,7 @@ Page* MakeFriendsPage(const PageContext& context) {
         context.queue->Run(page, [wanted] { return Api::SendFriendRequest(wanted); },
                            [=](std::string failure) {
                                if (!failure.empty()) {
-                                   context.status(QString::fromStdString(failure));
+                                   context.status(ErrorText(failure));
                                    return;
                                }
                                context.status(Tr("Asked %1 to be your friend.")
@@ -159,15 +158,16 @@ Page* MakeFriendsPage(const PageContext& context) {
     const auto request_row = [=](const Api::AccountFriend& request) {
         std::vector<QWidget*> buttons;
         if (request.incoming) {
-            QToolButton* accept = IconButton(QStringLiteral("\xE2\x9C\x93"), Tr("Accept"));
-            QObject::connect(accept, &QToolButton::clicked, page, [=] {
+            QPushButton* accept = TextButton(Tr("Accept"));
+            accept->setIcon(Icon("accept"));
+            QObject::connect(accept, &QPushButton::clicked, page, [=] {
                 mutate([request] { return Api::AcceptFriendRequest(request); });
             });
             buttons.push_back(accept);
         }
-        QToolButton* dismiss = IconButton(QStringLiteral("\xE2\x9C\x95"),
-                                          request.incoming ? Tr("Decline") : Tr("Cancel request"));
-        QObject::connect(dismiss, &QToolButton::clicked, page, [=] {
+        QPushButton* dismiss = TextButton(request.incoming ? Tr("Decline") : Tr("Cancel request"));
+        dismiss->setIcon(Icon("decline"));
+        QObject::connect(dismiss, &QPushButton::clicked, page, [=] {
             mutate([request] { return Api::DeclineFriendRequest(request); });
         });
         buttons.push_back(dismiss);
@@ -204,21 +204,20 @@ Page* MakeFriendsPage(const PageContext& context) {
         text->addWidget(DimLabel(StatusOf(entry, game)));
         top->addLayout(text, 1);
 
-        QToolButton* remove = IconButton(QStringLiteral("\xF0\x9F\x97\x91"), Tr("Remove"));
-        QToolButton* block = IconButton(QStringLiteral("\xE2\x9B\x94"), Tr("Block"));
+        QToolButton* remove = IconButton("remove", Tr("Remove"));
+        QToolButton* block = IconButton("block", Tr("Block"));
         remove->setEnabled(!entry.account_id.empty());
         block->setEnabled(!entry.account_id.empty());
         QObject::connect(remove, &QToolButton::clicked, page, [=] {
-            if (context.confirm(Tr("Remove Friend"), Tr("Remove %1 from your friends?").arg(name),
+            if (context.confirm(Tr("Remove friend"), Tr("Remove %1 from your friends?").arg(name),
                                 Tr("Remove"))) {
                 mutate([id = entry.account_id] { return Api::RemoveAccountFriend(id); });
             }
         });
         QObject::connect(block, &QToolButton::clicked, page, [=] {
-            if (context.confirm(Tr("Block"),
-                                Tr("Block %1? They will not appear on your list, cannot send you "
-                                   "anything, and cannot see you.")
-                                    .arg(name),
+            if (context.confirm(Tr("Block %1?").arg(name),
+                                Tr("They will not appear on your list, cannot send you anything, "
+                                   "and cannot see you."),
                                 Tr("Block"))) {
                 mutate([id = entry.account_id] { return Api::BlockAccount(id); });
             }
@@ -265,7 +264,7 @@ Page* MakeFriendsPage(const PageContext& context) {
             lines->addWidget(DimLabel(Tr("Friends since %1").arg(LocalTime(entry.friends_since))));
         }
         if (lines->count() == 0) {
-            lines->addWidget(DimLabel(Tr("Nothing more to show.")));
+            lines->addWidget(DimLabel(Tr("—")));
         }
         details_layout->addLayout(lines, 1);
         card_layout->addWidget(details);
@@ -273,7 +272,7 @@ Page* MakeFriendsPage(const PageContext& context) {
         const std::string key = key_of(entry);
         const auto show_open = [details, chevron](bool open) {
             details->setVisible(open);
-            chevron->setText(open ? QStringLiteral("\xE2\x96\xB4") : QStringLiteral("\xE2\x96\xBE"));
+            chevron->setText(open ? QStringLiteral("▴") : QStringLiteral("▾"));
         };
         show_open(expanded->contains(key));
         card->on_click = [=] {
@@ -294,14 +293,16 @@ Page* MakeFriendsPage(const PageContext& context) {
                 return;
             }
             QMenu menu(card);
-            if (entry.online && !entry.title_id.empty()) {
-                menu.addAction(Tr("Join Game"), card, [=] {
-                    QMessageBox::information(card, Tr("Join Game"),
-                                             context.host->JoinFriendSession(entry.pid));
+            // On Switch, a friend's joinable session is joined from here (UX spec §3.6).
+            if (entry.online && !entry.title_id.empty() &&
+                context.host->GetFamily() == Family::Switch) {
+                menu.addAction(Tr("Join game"), card, [=] {
+                    context.status(context.host->JoinFriendSession(entry.pid));
                 });
             }
-            if (context.invite_to_chat) {
-                menu.addAction(Tr("Invite to Chat Room"), card,
+            // The chat rooms are a host's own experiment, offered only where it switched them on.
+            if (context.invite_to_chat && context.host->ChatEnabled()) {
+                menu.addAction(context.host->ChatInviteText(), card,
                                [=] { context.invite_to_chat(entry.pid, name); });
             }
             if (!menu.isEmpty()) {
@@ -314,7 +315,7 @@ Page* MakeFriendsPage(const PageContext& context) {
     page->reload = [=](bool) {
         if (!SignedIn()) {
             list->Clear();
-            list->AddEmpty(Tr("Sign in to OpenPak to use this."));
+            list->AddNeedSignIn(context.host);
             *context.friends = {};
             if (context.friends_changed) {
                 context.friends_changed();
@@ -329,7 +330,7 @@ Page* MakeFriendsPage(const PageContext& context) {
             },
             [=](Api::AccountFriends fetched) {
                 if (!fetched.ok) {
-                    context.status(QString::fromStdString(fetched.error));
+                    context.status(ErrorText(fetched.error));
                     return;
                 }
                 const int scrolled = list->verticalScrollBar()->value();
@@ -345,6 +346,15 @@ Page* MakeFriendsPage(const PageContext& context) {
                     list->AddEmpty(read_only ? Tr("No friends yet.")
                                              : Tr("No friends yet. Add someone by their friend code."));
                 }
+                // Online friends first, then by name (UX spec §3.6).
+                std::stable_sort(fetched.friends.begin(), fetched.friends.end(),
+                                 [](const Api::AccountFriend& a, const Api::AccountFriend& b) {
+                                     if (a.online != b.online) {
+                                         return a.online;
+                                     }
+                                     return QString::fromStdString(a.display_name)
+                                                .localeAwareCompare(QString::fromStdString(b.display_name)) < 0;
+                                 });
                 for (const auto& entry : fetched.friends) {
                     friend_card(entry);
                 }
@@ -356,7 +366,6 @@ Page* MakeFriendsPage(const PageContext& context) {
                 }
             });
     };
-    QObject::connect(refresh, &QPushButton::clicked, page, [page] { page->reload(true); });
     return page;
 }
 
