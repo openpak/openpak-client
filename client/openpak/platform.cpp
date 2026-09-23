@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdio>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 namespace openpak {
 static LogSink g_sink;
@@ -20,6 +21,12 @@ static std::filesystem::path g_config, g_cache;
 void SetDirectories(std::filesystem::path config_dir, std::filesystem::path cache_dir) { g_config = std::move(config_dir); g_cache = std::move(cache_dir); }
 std::filesystem::path ConfigDir() { return g_config.empty() ? std::filesystem::temp_directory_path() / "openpak" : g_config; }
 std::filesystem::path CacheDir() { return g_cache.empty() ? ConfigDir() / "cache" : g_cache; }
+// Called under the lock: the host resets the source when what it reads goes away, and a heartbeat
+// asking at that moment must not call into it.
+static std::mutex g_profile_mutex;
+static std::function<std::string()> g_profile_source;
+void SetProfileSource(std::function<std::string()> source) { std::lock_guard lock{g_profile_mutex}; g_profile_source = std::move(source); }
+std::string ProfileId() { std::lock_guard lock{g_profile_mutex}; return g_profile_source ? g_profile_source() : std::string{}; }
 bool CreateParentDirs(const std::filesystem::path& path) { std::error_code ec; std::filesystem::create_directories(path.parent_path(), ec); return !ec; }
 bool WriteFile(const std::filesystem::path& path, const std::string& contents) {
     CreateParentDirs(path);

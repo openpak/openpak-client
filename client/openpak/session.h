@@ -107,6 +107,9 @@ void StartHeartbeat(std::function<std::string()> current_title_id);
 /// Say we are going, so the account drops offline now rather than when the lease runs out.
 void GoOffline();
 
+/// A profile was deleted: its device account is forgotten on every server it had one on.
+void ForgetProfile(const std::string& profile);
+
 /// Fill the friend cache the guest's friend:u reads, and publish the presence the running title
 /// set. The Qt host does this on its own timers; a build without one -- Android -- has nothing
 /// else that would, and a title whose friend list is empty cannot join anybody.

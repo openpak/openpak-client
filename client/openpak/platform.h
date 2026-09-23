@@ -3,6 +3,7 @@
 // string helpers the moved code used from the emulator's common library.
 #pragma once
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -12,6 +13,13 @@ namespace openpak::Platform {
 void SetDirectories(std::filesystem::path config_dir, std::filesystem::path cache_dir);
 std::filesystem::path ConfigDir();
 std::filesystem::path CacheDir();
+// Which local profile the OpenPak identity belongs to. Each profile is its own account -- its own
+// website sign-in and its own device account -- and one is active at a time, like a console with
+// one user signed in. The host answers with a stable id for the active profile (a Switch user's
+// UUID), asked each time it matters, so a switch is noticed wherever it happens. No source, or an
+// empty answer, is the single shared identity every host had before profiles.
+void SetProfileSource(std::function<std::string()> source);
+std::string ProfileId();
 bool CreateParentDirs(const std::filesystem::path& path);
 bool WriteFile(const std::filesystem::path& path, const std::string& contents);
 std::string ReadFile(const std::filesystem::path& path);

@@ -73,6 +73,7 @@ struct State {
     int port = 443;
     std::string ca_path;
 
+    std::string profile; ///< The local profile the device account and identity below belong to.
     std::string device_id;
     std::string device_password;
 
@@ -356,8 +357,30 @@ std::string Text(const nlohmann::json& object, const char* key) {
     return it != object.end() && it->is_string() ? it->get<std::string>() : std::string{};
 }
 
+/// The device account, kept per server and per profile: a console keeps one per user, and each
+/// profile is its own BAAS user. Without a profile it is the one per server it always was. The
+/// certificate stays per server -- it is the console, and a console has one.
+std::filesystem::path DeviceAccountPath(const State& state) {
+    const Endpoint endpoint = EndpointOfLocked(state);
+
+    return state.profile.empty()
+               ? DevicePath(endpoint, "json")
+               : Platform::ConfigDir() / "openpak" /
+                     fmt::format("device-{}-{}.json", endpoint.key, state.profile);
+}
+
 void LoadDeviceAccount(State& state) {
-    const std::string contents = Platform::ReadFile(DevicePath(EndpointOfLocked(state), "json"));
+    // From before profiles, one per server: it goes to the profile open at the first launch since,
+    // which is the one whose account it was linked to.
+    std::error_code ec;
+    const auto path = DeviceAccountPath(state);
+    const auto shared = DevicePath(EndpointOfLocked(state), "json");
+    if (!state.profile.empty() && !std::filesystem::exists(path, ec) &&
+        std::filesystem::exists(shared, ec)) {
+        std::filesystem::rename(shared, path, ec);
+    }
+
+    const std::string contents = Platform::ReadFile(path);
     if (contents.empty()) {
         return;
     }
@@ -374,7 +397,7 @@ void LoadDeviceAccount(State& state) {
 
 void SaveDeviceAccount(const State& state) {
     const nlohmann::json out{{"id", state.device_id}, {"password", state.device_password}};
-    const std::filesystem::path path = DevicePath(EndpointOfLocked(state), "json");
+    const std::filesystem::path path = DeviceAccountPath(state);
 
     Platform::CreateParentDirs(path);
     Platform::WriteFile(path, out.dump());
@@ -687,10 +710,55 @@ std::vector<std::uint8_t> CaCertificateDer() {
     return der;
 }
 
+/// Another profile is another account, as another user is on a console: the one leaving goes
+/// offline now rather than at the end of its lease, nothing of it is kept, and the one arriving
+/// signs in with its own device account on the next Ensure. True when there was a switch.
+bool FollowProfile(State& state) {
+    const std::string profile = Platform::ProfileId();
+
+    {
+        std::lock_guard lock{state.mutex};
+        if (profile == state.profile) {
+            return false;
+        }
+    }
+
+    Presence(state, "OFFLINE");
+
+    std::lock_guard lock{state.mutex};
+    if (profile == state.profile) {
+        return false;
+    }
+
+    state.profile = profile;
+    state.device_id.clear();
+    state.device_password.clear();
+    state.id_token.clear();
+    state.id_token_expiry = {};
+    state.id_token_application.clear();
+    state.application_token.clear();
+    state.user_id.clear();
+    state.nsa_id = 0;
+    state.nickname.clear();
+    state.friend_code.clear();
+    state.invitations.clear();
+    state.sender_names.clear();
+    state.dismissed.clear();
+
+    if (!state.server_host.empty()) {
+        LoadDeviceAccount(state);
+    }
+
+    OPENPAK_LOG_INFO("[OpenPak] The active profile changed; signing its own account in");
+
+    return true;
+}
+
 void Configure(std::string server_host, int port, std::string ca_path) {
     State& state = Get();
     std::lock_guard lock{state.mutex};
 
+    state.profile = Platform::ProfileId();
     state.server_host = std::move(server_host);
     state.port = port;
     state.ca_path = ca_path.empty() ? (Platform::ConfigDir() / "openpak" / "ca.pem").string()
@@ -720,6 +788,7 @@ bool Ensure() {
     }
 
     State& state = Get();
+    FollowProfile(state);
     std::lock_guard lock{state.mutex};
 
     if (Fresh(state)) {
@@ -743,6 +812,7 @@ std::string Link(const std::string& account_id_token) {
     }
 
     State& state = Get();
+    FollowProfile(state);
     std::lock_guard lock{state.mutex};
 
     std::string error;
@@ -759,6 +829,7 @@ std::string LinkWithPassword(const std::string& email, const std::string& passwo
     }
 
     State& state = Get();
+    FollowProfile(state);
     std::lock_guard lock{state.mutex};
 
     const Endpoint endpoint = EndpointOfLocked(state);
@@ -1051,6 +1122,12 @@ void StartHeartbeat(std::function<std::string()> current_title_id) {
                 return;
             }
 
+            // One beat for the life of the process: across a profile switch it speaks for
+            // whoever is signed in now, which may mean signing them in first.
+            if (FollowProfile(state)) {
+                Ensure();
+            }
+
             if (tick % InvitationEveryNthBeat == 0) {
                 RefreshInvitations();
             }
@@ -1064,6 +1141,23 @@ void StartHeartbeat(std::function<std::string()> current_title_id) {
             Presence(state, "ONLINE");
         }
     });
+}
+
+void ForgetProfile(const std::string& profile) {
+    if (profile.empty()) {
+        return;
+    }
+
+    std::error_code ec;
+    const std::string suffix = fmt::format("-{}.json", profile);
+
+    for (const auto& entry :
+         std::filesystem::directory_iterator(Platform::ConfigDir() / "openpak", ec)) {
+        const std::string name = entry.path().filename().string();
+        if (name.starts_with("device-") && name.ends_with(suffix)) {
+            std::filesystem::remove(entry.path(), ec);
+        }
+    }
 }
 
 void GoOffline() {

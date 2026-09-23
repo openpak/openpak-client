@@ -12,8 +12,8 @@
 
 #include "openpak/api.h"
 
-OpenPakSignInDialog::OpenPakSignInDialog(QWidget* parent, bool first_run, const QString& error,
-                                         const QString& email)
+OpenPakSignInDialog::OpenPakSignInDialog(QWidget* parent, const QString& intro_text,
+                                         const QString& error, const QString& email)
     : QDialog(parent) {
     setWindowTitle(tr("Sign in to OpenPak"));
     setMinimumWidth(380);
@@ -21,11 +21,8 @@ OpenPakSignInDialog::OpenPakSignInDialog(QWidget* parent, bool first_run, const 
     auto* layout = new QVBoxLayout(this);
     layout->setSpacing(12);
 
-    if (first_run) {
-        auto* intro = new QLabel(
-            tr("Sign in once and this emulator does the rest: certificates, the console link and "
-               "the network redirect are set up for you. You can do this later from the OpenPak "
-               "menu."));
+    if (!intro_text.isEmpty()) {
+        auto* intro = new QLabel(intro_text);
         intro->setWordWrap(true);
         layout->addWidget(intro);
     }
@@ -52,7 +49,7 @@ OpenPakSignInDialog::OpenPakSignInDialog(QWidget* parent, bool first_run, const 
 
     auto* buttons = new QDialogButtonBox;
     QPushButton* submit = buttons->addButton(tr("Sign in"), QDialogButtonBox::AcceptRole);
-    buttons->addButton(first_run ? tr("Not now") : tr("Cancel"), QDialogButtonBox::RejectRole);
+    buttons->addButton(tr("Cancel"), QDialogButtonBox::RejectRole);
     layout->addWidget(buttons);
 
     const auto ready = [this, submit] {

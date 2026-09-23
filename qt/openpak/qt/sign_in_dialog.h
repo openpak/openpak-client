@@ -12,9 +12,10 @@ class QLineEdit;
 // this again with the reason when that fails.
 class OpenPakSignInDialog : public QDialog {
 public:
-    // first_run words it as the one-time offer ("Not now" instead of Cancel, and what signing
-    // in sets up); error is why the previous attempt failed, email what was typed then.
-    explicit OpenPakSignInDialog(QWidget* parent, bool first_run = false, const QString& error = {},
+    // intro is a line saying what to do before signing in (the host's setup wizard uses it after
+    // sending somebody to create an account); error is why the previous attempt failed, email
+    // what was typed then.
+    explicit OpenPakSignInDialog(QWidget* parent, const QString& intro = {}, const QString& error = {},
                                  const QString& email = {});
 
     QString Email() const;

@@ -35,6 +35,19 @@ void Save(u64 pid, std::string_view username, std::string_view friend_code,
           std::string_view token, std::string_view bearer);
 void Clear();
 
+// Everything above is the active profile's account (openpak::Platform::ProfileId). These look at
+// the others, which is how one account is kept to one profile and how a profile list can say who
+// each profile is signed in as.
+
+// The profile, other than except_profile, whose account is this pid; empty when there is none.
+std::string HolderOf(u64 pid, const std::string& except_profile);
+
+// The OpenPak name the profile is signed in as, or empty when it is offline.
+std::string UsernameOf(const std::string& profile);
+
+// A profile was deleted: its account goes with it.
+void Forget(const std::string& profile);
+
 // Mirrors the link state onto the guest SD card (sdmc_root/config/openpak/session.txt) so
 // homebrew can read its signed-in identity with a plain fopen(), no BAAS id_token needed.
 void WriteGuestBridge(const std::filesystem::path& sdmc_root);

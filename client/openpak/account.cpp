@@ -6,9 +6,6 @@
 
 #include <fmt/format.h>
 
-#include "openpak/platform.h"
-#include "openpak/platform.h"
-#include "openpak/platform.h"
 #include "openpak/account.h"
 #include "openpak/platform.h"
 
@@ -18,6 +15,7 @@ namespace {
 
 std::mutex g_mutex;
 bool g_loaded = false;
+std::string g_profile; ///< The profile the loaded account belongs to.
 
 u64 g_pid = 0;
 std::string g_username;
@@ -26,16 +24,63 @@ std::string g_token;
 std::string g_bearer;
 u64 g_generation = 0;
 
-std::filesystem::path FilePath() {
+/// The single account every install had before profiles, and the one a host without profiles
+/// still has.
+std::filesystem::path SharedFilePath() {
     return openpak::Platform::ConfigDir() / "openpak_account.txt";
+}
+
+std::filesystem::path FilePath(const std::string& profile) {
+    return profile.empty() ? SharedFilePath()
+                           : openpak::Platform::ConfigDir() / "openpak" /
+                                 fmt::format("account-{}.txt", profile);
+}
+
+std::filesystem::path FilePath() {
+    return FilePath(g_profile);
+}
+
+std::string ValueOf(const std::string& contents, std::string_view wanted) {
+    std::vector<std::string> lines;
+    openpak::Platform::SplitString(contents, '\n', lines);
+
+    for (const auto& line : lines) {
+        const auto eq = line.find('=');
+        if (eq != std::string::npos && openpak::Platform::StripSpaces(line.substr(0, eq)) == wanted) {
+            return openpak::Platform::StripSpaces(line.substr(eq + 1));
+        }
+    }
+
+    return {};
 }
 
 // Caller holds g_mutex.
 void EnsureLoaded() {
-    if (g_loaded) {
+    // Another profile is another account: what is loaded is dropped the moment the active profile
+    // is not the one it belongs to, and the generation moves so cached tokens go with it.
+    const std::string profile = openpak::Platform::ProfileId();
+    if (g_loaded && profile == g_profile) {
         return;
     }
+    if (g_loaded) {
+        ++g_generation;
+    }
     g_loaded = true;
+    g_profile = profile;
+    g_pid = 0;
+    g_username.clear();
+    g_friend_code.clear();
+    g_token.clear();
+    g_bearer.clear();
+
+    // From before profiles, one account per install: it goes to the profile open at the first
+    // launch since, which is the one it was signed in on.
+    std::error_code ec;
+    if (!profile.empty() && !std::filesystem::exists(FilePath(), ec) &&
+        std::filesystem::exists(SharedFilePath(), ec)) {
+        openpak::Platform::CreateParentDirs(FilePath());
+        std::filesystem::rename(SharedFilePath(), FilePath(), ec);
+    }
 
     const std::string contents = openpak::Platform::ReadFile(FilePath());
     std::vector<std::string> lines;
@@ -123,7 +168,7 @@ u64 GetGeneration() {
 void Save(u64 pid, std::string_view username, std::string_view friend_code,
           std::string_view token, std::string_view bearer) {
     std::lock_guard lock{g_mutex};
-    g_loaded = true;
+    EnsureLoaded();
     g_pid = pid;
     g_username = username;
     g_friend_code = friend_code;
@@ -135,7 +180,7 @@ void Save(u64 pid, std::string_view username, std::string_view friend_code,
 
 void Clear() {
     std::lock_guard lock{g_mutex};
-    g_loaded = true;
+    EnsureLoaded();
     g_pid = 0;
     g_username.clear();
     g_friend_code.clear();
@@ -143,6 +188,45 @@ void Clear() {
     g_bearer.clear();
     ++g_generation;
     void(std::filesystem::remove(FilePath()));
+}
+
+std::string HolderOf(u64 pid, const std::string& except_profile) {
+    std::error_code ec;
+    const auto directory = openpak::Platform::ConfigDir() / "openpak";
+
+    for (const auto& entry : std::filesystem::directory_iterator(directory, ec)) {
+        const std::string name = entry.path().filename().string();
+        if (!name.starts_with("account-") || !name.ends_with(".txt")) {
+            continue;
+        }
+
+        const std::string profile = name.substr(8, name.size() - 12);
+        if (profile == except_profile) {
+            continue;
+        }
+
+        if (ValueOf(openpak::Platform::ReadFile(entry.path()), "pid") == std::to_string(pid)) {
+            return profile;
+        }
+    }
+
+    return {};
+}
+
+std::string UsernameOf(const std::string& profile) {
+    return ValueOf(openpak::Platform::ReadFile(FilePath(profile)), "username");
+}
+
+void Forget(const std::string& profile) {
+    std::lock_guard lock{g_mutex};
+
+    std::error_code ec;
+    std::filesystem::remove(FilePath(profile), ec);
+
+    if (profile == g_profile) {
+        g_loaded = false;
+        ++g_generation;
+    }
 }
 
 void WriteGuestBridge(const std::filesystem::path& sdmc_root) {
