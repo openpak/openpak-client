@@ -66,4 +66,24 @@ std::filesystem::path ContainedPath(const std::filesystem::path& root, const std
     }
     return root / normal;
 }
+const std::string& AndroidSystemRoots() {
+    static const std::string roots = [] {
+        std::string pem;
+        for (const char* dir :
+             {"/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"}) {
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+                if (entry.is_regular_file(ec)) {
+                    pem += ReadFile(entry.path());
+                    pem += '\n';
+                }
+            }
+            if (!pem.empty()) {
+                break; // the APEX copy, when there is one, is the current store
+            }
+        }
+        return pem;
+    }();
+    return roots;
+}
 } // namespace openpak::Platform

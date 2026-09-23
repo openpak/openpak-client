@@ -8,20 +8,26 @@
 
 #include <httplib.h>
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && __has_include(<openssl/cert.h>)
 // The patched OpenSSL the emulator builds against ships the public roots as a PEM blob.
 #include <openssl/cert.h>
+#define OPENPAK_CERT_BLOB 1
 #endif
 
 #include "openpak/log.h"
+#include "openpak/platform.h"
 
 namespace WebService {
 
 namespace {
 
 void ApplyCaCertPath(httplib::Client& client) {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && defined(OPENPAK_CERT_BLOB)
     client.load_ca_cert_store(kCert, sizeof(kCert));
+#elif defined(__ANDROID__)
+    // A TLS library without the blob (Azahar's LibreSSL): the phone's own public roots.
+    const std::string& roots = openpak::Platform::AndroidSystemRoots();
+    client.load_ca_cert_store(roots.data(), roots.size());
 #elif defined(__linux__)
     static constexpr std::array<const char*, 4> candidates{
         "/etc/ssl/certs/ca-certificates.crt",
