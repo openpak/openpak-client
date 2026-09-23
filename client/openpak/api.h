@@ -218,6 +218,10 @@ std::string PushSave(const std::string& title_id_hex, std::span<const u8> data);
 // pass "wii" and "ds" — emulators/prds/emulator-integration-prd.md S-1) and what name uploads report as
 // the machine that made them (default: the platform).
 void SetSavesPlatform(const std::string& platform);
+// The cloud version the last pull or push of this title saw ("" when none), and a way to seed it
+// from what the host kept on disk, so the next push names the version it builds on.
+std::string SaveVersion(const std::string& title_id_hex);
+void SetSaveVersion(const std::string& title_id_hex, const std::string& version);
 void SetSaveDevice(const std::string& device);
 
 struct Profile {

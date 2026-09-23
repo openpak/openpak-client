@@ -57,7 +57,9 @@ namespace WebService::OpenPakApi {
 namespace {
 
 constexpr const char* CanonicalUrl = "https://openpak.org";
-std::string g_saves_platform = "citron";
+// Every Switch emulator keeps its saves in the one slot Ryujinx uses, so a save follows the
+// person from one to another. Wii and DS hosts set their own.
+std::string g_saves_platform = "switch";
 std::string g_save_device; // empty: report the platform name
 constexpr int TimeoutSeconds = 15;
 
@@ -535,6 +537,17 @@ std::string HashBcatSeedHex(const std::vector<u8>& data) {
 
 void SetSavesPlatform(const std::string& platform) {
     g_saves_platform = platform;
+}
+
+std::string SaveVersion(const std::string& title_id_hex) {
+    std::lock_guard lock{g_save_versions_mutex};
+    const auto it = g_save_versions.find(title_id_hex);
+    return it == g_save_versions.end() ? std::string{} : it->second;
+}
+
+void SetSaveVersion(const std::string& title_id_hex, const std::string& version) {
+    std::lock_guard lock{g_save_versions_mutex};
+    g_save_versions[title_id_hex] = version;
 }
 
 void SetSaveDevice(const std::string& device) {

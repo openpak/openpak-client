@@ -361,4 +361,132 @@ void UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
 #endif
 }
 
+namespace {
+
+// Beside the save folder, not inside it: the guest owns everything inside. Per title, because in
+// this layout the folder's parent is the user's, shared by every title.
+std::filesystem::path MarkerFor(const std::filesystem::path& save_dir) {
+    return save_dir.parent_path() / (save_dir.filename().string() + ".openpak-version");
+}
+
+std::string ReadMarker(const std::filesystem::path& save_dir) {
+    std::string version = openpak::Platform::ReadFile(MarkerFor(save_dir));
+    while (!version.empty() && (version.back() == '\n' || version.back() == '\r' ||
+                                version.back() == ' ')) {
+        version.pop_back();
+    }
+    return version;
+}
+
+void WriteMarker(const std::filesystem::path& save_dir, const std::string& version) {
+    if (!version.empty()) {
+        openpak::Platform::WriteFile(MarkerFor(save_dir), version);
+    }
+}
+
+} // namespace
+
+PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id) {
+#if defined(ENABLE_WEB_SERVICE) && (defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32))
+    if (save_dir.empty() || !Common::OpenPakAccount::IsLinked()) {
+        return PullOutcome::Nothing;
+    }
+    const std::string title = fmt::format("{:016x}", title_id);
+    const auto zip = WebService::OpenPakApi::PullSave(title);
+    if (!zip || zip->empty()) {
+        return PullOutcome::Nothing;
+    }
+
+    const std::string cloud = WebService::OpenPakApi::SaveVersion(title);
+    const std::string known = ReadMarker(save_dir);
+    const bool local = HasLocalContent(save_dir);
+    if (local && cloud == known) {
+        return PullOutcome::Nothing;
+    }
+    if (local && known.empty()) {
+        return PullOutcome::BothExist;
+    }
+
+    std::error_code ec;
+    if (local) {
+        const auto backup =
+            save_dir.parent_path() / (save_dir.filename().string() + ".openpak-backup");
+        std::filesystem::remove_all(backup, ec);
+        std::filesystem::copy(save_dir, backup, std::filesystem::copy_options::recursive, ec);
+        if (ec) {
+            OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: could not keep a backup ({}); local "
+                                "save kept",
+                                title_id, ec.message());
+            return PullOutcome::Nothing;
+        }
+    }
+    std::filesystem::create_directories(save_dir, ec);
+
+#ifdef OPENPAK_HAVE_LIBARCHIVE
+    const bool applied = UnzipToDirectory(*zip, save_dir);
+#else
+    const bool applied = UnzipToDirectoryPowerShell(*zip, save_dir, title_id);
+#endif
+    if (!applied) {
+        OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: archive refused -> local save kept",
+                            title_id);
+        return PullOutcome::Nothing;
+    }
+    WriteMarker(save_dir, cloud);
+    OPENPAK_LOG_INFO("OpenPak save pull {:016X}: version {} applied", title_id, cloud);
+    return PullOutcome::Pulled;
+#else
+    (void)save_dir;
+    (void)title_id;
+    return PullOutcome::Nothing;
+#endif
+}
+
+std::vector<u8> CaptureOnExit(const std::filesystem::path& save_dir, u64 title_id) {
+#if defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32)
+    // ponytail: every exit uploads; skipping an unchanged save needs a content hash of the
+    // folder, add it if the allowance fills with identical versions (Ryujinx has the same note).
+    if (save_dir.empty() || !Common::OpenPakAccount::IsLinked() || !HasLocalContent(save_dir)) {
+        return {};
+    }
+#ifdef OPENPAK_HAVE_LIBARCHIVE
+    return ZipDirectory(save_dir);
+#else
+    return ZipDirectoryPowerShell(save_dir, title_id);
+#endif
+#else
+    (void)save_dir;
+    (void)title_id;
+    return {};
+#endif
+}
+
+std::string PushCaptured(const std::filesystem::path& save_dir, u64 title_id,
+                         std::vector<u8> zip_bytes) {
+#ifdef ENABLE_WEB_SERVICE
+    if (zip_bytes.empty()) {
+        return {};
+    }
+    const std::string title = fmt::format("{:016x}", title_id);
+    // The version this copy was last in step with, from disk: the in-memory one is gone after a
+    // restart, and a push without it cannot be told apart from a conflicting one.
+    if (const std::string known = ReadMarker(save_dir); !known.empty()) {
+        WebService::OpenPakApi::SetSaveVersion(title, known);
+    }
+    std::string error = WebService::OpenPakApi::PushSave(title, zip_bytes);
+    if (!error.empty()) {
+        OPENPAK_LOG_WARNING("OpenPak save push {:016X} failed: {}", title_id, error);
+        return error;
+    }
+    WriteMarker(save_dir, WebService::OpenPakApi::SaveVersion(title));
+    OPENPAK_LOG_INFO("OpenPak save push {:016X}: {} B", title_id, zip_bytes.size());
+    return {};
+#else
+    (void)save_dir;
+    (void)title_id;
+    (void)zip_bytes;
+    return {};
+#endif
+}
+
 } // namespace OpenPak::SaveSync
