@@ -129,4 +129,20 @@ void DismissInvitation(const std::string& invitation_id);
 /// Called once for each invitation that was not there at the previous poll.
 void SetInvitationHook(std::function<void(const Invitation&)> on_arrival);
 
+/// What one request as the signed-in user produced. Status 0 is a request that could not be made
+/// at all: nothing signed in, or no answer from the server.
+struct Response {
+    int status = 0;
+    std::string body;
+};
+
+/// One request to a Nintendo hostname as the signed-in BAAS user: the pinned client and the
+/// user-scoped bearer from the login, with the sign-in refreshed first when it has aged out. This
+/// is how the friends module's own REST calls (openpak/baas.h) leave. `path_and_query` is sent as
+/// given; an empty `content_type` sends no body, and any other goes out with the body as UTF-8,
+/// "; charset=utf-8" appended the way the reference's StringContent writes it. Never throws.
+Response SendAs(const std::string& method, const std::string& host,
+                const std::string& path_and_query, const std::string& content_type,
+                const std::string& body);
+
 } // namespace openpak::client::session
