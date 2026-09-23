@@ -26,7 +26,8 @@ public:
     explicit OpenPakSignInDialog(QWidget* parent, const QString& intro = {}, const QString& error = {},
                                  const QString& email = {});
 
-    // Shows the Device name field, filled with device_default ("{emulator} on {machine}").
+    // Fills the Device name field: signin.device_default ("{emulator} — {profile} on {machine}")
+    // on a host with profiles, else signin.device_default_single (DefaultDeviceName).
     void SetDeviceName(const QString& device_default);
 
     // Runs on a worker thread with (email, password, device name); returns empty on success, else

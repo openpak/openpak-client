@@ -3,7 +3,7 @@
 // Ryujinx shows it: the account's friends, online ones first, up to the number the game allows.
 // Mouse and keyboard work as in any list; a controller works through the host's Navigation:
 // up/down move through the friends, A picks or un-picks one, down past the last friend (or
-// right) reaches Invite and Cancel, A presses the button, B cancels.
+// right) reaches Send invite and Cancel, A presses the button, B cancels.
 #pragma once
 #include <cstdint>
 #include <vector>
