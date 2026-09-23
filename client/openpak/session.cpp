@@ -1122,23 +1122,31 @@ void StartHeartbeat(std::function<std::string()> current_title_id) {
                 return;
             }
 
-            // One beat for the life of the process: across a profile switch it speaks for
-            // whoever is signed in now, which may mean signing them in first.
-            if (FollowProfile(state)) {
-                Ensure();
+            // Nothing thrown here may leave the beat: on this thread it would end the emulator,
+            // and a beat that stops is presence that stops (Ryujinx lost both on a friend-list
+            // change, 2026-09-22).
+            try {
+                // One beat for the life of the process: across a profile switch it speaks for
+                // whoever is signed in now, which may mean signing them in first.
+                if (FollowProfile(state)) {
+                    Ensure();
+                }
+
+                if (tick % InvitationEveryNthBeat == 0) {
+                    RefreshInvitations();
+                }
+
+                // The guest's own friend list, kept warm here because nothing else on this build
+                // does it. NEX titles poll friend:u in a loop and must never wait on a network
+                // call.
+                RefreshGuestFriends();
+
+                // Presence is not worth a louder failure than a debug line: the account simply
+                // goes quiet, which is exactly what it should look like.
+                Presence(state, "ONLINE");
+            } catch (const std::exception& e) {
+                OPENPAK_LOG_WARNING("[OpenPak] Heartbeat beat failed: {}", e.what());
             }
-
-            if (tick % InvitationEveryNthBeat == 0) {
-                RefreshInvitations();
-            }
-
-            // The guest's own friend list, kept warm here because nothing else on this build
-            // does it. NEX titles poll friend:u in a loop and must never wait on a network call.
-            RefreshGuestFriends();
-
-            // Presence is not worth a louder failure than a debug line: the account simply goes
-            // quiet, which is exactly what it should look like.
-            Presence(state, "ONLINE");
         }
     });
 }
