@@ -951,6 +951,26 @@ bool SetModFavourite(const std::string& mod_id, bool favourite) {
     return !ClearSessionIfRejected(result) && result && result->status / 100 == 2;
 }
 
+std::map<std::string, std::string> CatalogueStatuses() {
+    std::map<std::string, std::string> out;
+    const auto result = Send("GET", "/api/v1/titles", {}, {});
+    if (!result || result->status != 200) {
+        return out;
+    }
+    try {
+        const auto json = nlohmann::json::parse(result->body);
+        for (const auto& title : json.value("titles", nlohmann::json::array())) {
+            const std::string id = title.value("title_id", std::string{});
+            const std::string status = title.value("status", std::string{});
+            if (!id.empty() && !status.empty()) {
+                out[id] = status;
+            }
+        }
+    } catch (const nlohmann::json::exception&) {
+    }
+    return out;
+}
+
 void RevokeToken(const std::string& bearer) {
     if (!bearer.empty()) {
         Send("DELETE", "/api/v1/token", {}, bearer);

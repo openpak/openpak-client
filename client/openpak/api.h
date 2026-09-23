@@ -306,6 +306,10 @@ bool SetModFavourite(const std::string& mod_id, bool favourite);
 // it off the UI thread.
 void RevokeToken(const std::string& bearer);
 
+// The catalogue's playability per title (GET /api/v1/titles, public): title id hex -> status.
+// Empty when the site could not be asked. Blocking.
+std::map<std::string, std::string> CatalogueStatuses();
+
 // The mod's zip, verified against the sha256 the catalogue published. nullopt on a failed
 // download or a hash mismatch -- the bytes came off the network and are refused either way.
 std::optional<std::vector<u8>> DownloadModPackage(const Mod& mod);
