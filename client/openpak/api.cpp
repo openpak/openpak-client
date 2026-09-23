@@ -8,10 +8,18 @@
 //   GET  /api/v1/me                          display name, avatar
 //   GET  /api/v1/me/switch                   pid, friend code, openpak token, friends with presence
 //   POST /api/v1/me/switch/friend            request by friend code; accept / decline by pid
-//   POST /api/v1/me/friends/remove           by account id
+//   GET  /api/v1/me/friends[/requests]       the core's friend graph and pending requests
+//   POST /api/v1/me/friends/requests[/accept] request by friend code; accept by account id
+//   POST /api/v1/me/friends/remove|block     by account id (remove also declines and cancels)
+//   GET  /api/v1/me/invitations[, /decline]  invitations the core arranged
 //   GET  /api/v1/status                      players per title
-//   GET/PUT /api/v1/me/saves/citron/<title>  cloud saves, versioned: a PUT names the version it
+//   GET  /api/v1/titles                      the catalogue: names and statuses
+//   GET  /api/v1/me/saves                    every cloud save with its versions, and the allowance
+//   DELETE /api/v1/me/saves/versions/<id>    one version, the cloud copy only
+//   GET/PUT /api/v1/me/saves/switch/<title>  cloud saves, versioned: a PUT names the version it
 //                                            loaded from and a stale one becomes a conflict
+//   GET  /media/avatars/<account>/256, /titles/icon/<title>  public pictures
+//   GET  status.<site>/api/status            the status box's per-service checks
 //   GET  /ca.pem                             the OpenPak CA, pinned by the SSL service
 //
 // What the OpenPak server offered and OpenPak does not (lobby, recent players, reports, history,
@@ -22,6 +30,8 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
+#include <ctime>
 #include <cstdlib>
 #include <filesystem>
 #include <map>
@@ -683,6 +693,15 @@ Profile GetProfile() {
         const auto json = nlohmann::json::parse(result->body);
         out.name = json.value("display_name", std::string{});
         out.console_nickname = out.name;
+        out.account_id = Str(json, "account_id");
+        out.friend_code = Str(json, "friend_code");
+        if (const auto linked = json.find("linked_platforms"); linked != json.end() && linked->is_array()) {
+            for (const auto& platform : *linked) {
+                if (platform.is_object() && !Str(platform, "namespace").empty()) {
+                    out.linked_platforms.push_back(Str(platform, "namespace"));
+                }
+            }
+        }
         if (const auto avatar = json.find("avatar_url"); avatar != json.end() && avatar->is_string()) {
             const auto image = Send("GET", avatar->get<std::string>(), {}, bearer);
             if (image && image->status == 200) {
@@ -738,6 +757,234 @@ FriendList GetFriends() {
         out.error = fmt::format("Unexpected friends response: {}", e.what());
     }
     return out;
+}
+
+namespace {
+
+// A POST to the website's friend routes; empty on success, else what to show.
+std::string PostAccount(const std::string& path, const nlohmann::json& body) {
+    const std::string bearer = Bearer();
+    if (bearer.empty()) {
+        return "Not signed in.";
+    }
+    const auto result = Send("POST", path, body.dump(), bearer);
+    if (ClearSessionIfRejected(result)) {
+        return std::string{SessionExpired};
+    }
+    if (!result) {
+        return std::string{Unreachable};
+    }
+    if (result->status / 100 != 2) {
+        return ErrorFrom(result->body, fmt::format("OpenPak answered {}.", result->status));
+    }
+    return {};
+}
+
+std::string UpperHex(u64 value) {
+    return value == 0 ? std::string{} : fmt::format("{:016X}", value);
+}
+
+// The adapter's presence: status is a number or a word, app_id a 16-digit hex string, a shorter
+// decimal one or a number, since unix seconds.
+void ParseAdapterPresence(const nlohmann::json& presence, AccountFriend& out) {
+    if (const auto status = presence.find("status"); status != presence.end()) {
+        if (status->is_number()) {
+            out.online = status->get<double>() > 0;
+        } else if (status->is_string()) {
+            const std::string word = openpak::Platform::ToLower(status->get<std::string>());
+            out.online = word == "online" || word == "playing";
+        }
+    }
+    if (const auto app = presence.find("app_id"); app != presence.end()) {
+        u64 id = 0;
+        try {
+            if (app->is_number_unsigned()) {
+                id = app->get<u64>();
+            } else if (app->is_string() && !app->get<std::string>().empty()) {
+                const std::string text = app->get<std::string>();
+                id = std::stoull(text, nullptr, text.size() == 16 ? 16 : 10);
+            }
+        } catch (const std::exception&) {
+        }
+        out.title_id = out.online ? UpperHex(id) : std::string{};
+    }
+    const std::string name_space = Str(presence, "namespace");
+    out.console_namespace = out.online ? (name_space.empty() ? "switch" : name_space) : std::string{};
+    if (const auto since = presence.find("since"); since != presence.end() && since->is_number()) {
+        out.online_since = since->get<s64>();
+    }
+}
+
+AccountFriend ParseAdapterFriend(const nlohmann::json& json) {
+    AccountFriend out;
+    out.account_id = Str(json, "account_id");
+    out.pid = json.value("pid", u64{0});
+    out.display_name = Str(json, "name");
+    out.friend_code = Str(json, "friend_code");
+    if (const auto since = json.find("friends_since"); since != json.end() && since->is_number()) {
+        out.friends_since = since->get<s64>();
+    }
+    if (const auto presence = json.find("presence"); presence != json.end() && presence->is_object()) {
+        ParseAdapterPresence(*presence, out);
+    }
+    return out;
+}
+
+s64 UnixFromIso(const std::string& text) {
+    // RFC3339 UTC as the website writes it ("2026-09-08T09:15:00Z"); anything else is unknown.
+    std::tm tm{};
+    if (text.size() < 19 || std::sscanf(text.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d", &tm.tm_year,
+                                        &tm.tm_mon, &tm.tm_mday, &tm.tm_hour, &tm.tm_min,
+                                        &tm.tm_sec) != 6) {
+        return 0;
+    }
+    // Days from civil (Howard Hinnant), so no timegm/_mkgmtime split between platforms.
+    int y = tm.tm_year;
+    const unsigned m = static_cast<unsigned>(tm.tm_mon);
+    y -= m <= 2;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);
+    const unsigned doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + static_cast<unsigned>(tm.tm_mday) - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const s64 days = static_cast<s64>(era) * 146097 + static_cast<s64>(doe) - 719468;
+    return days * 86400 + tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec;
+}
+
+AccountFriend ParseCoreFriend(const nlohmann::json& json) {
+    AccountFriend out;
+    out.account_id = Str(json, "account_id");
+    out.display_name = Str(json, "display_name");
+    const auto online = json.find("online");
+    out.online = online != json.end() && online->is_boolean() && online->get<bool>();
+    if (out.online) {
+        out.title_id = Str(json, "title_id");
+        std::transform(out.title_id.begin(), out.title_id.end(), out.title_id.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        out.console_namespace = Str(json, "namespace");
+        out.online_since = UnixFromIso(Str(json, "since"));
+    }
+    return out;
+}
+
+bool IsTameId(const std::string& id) {
+    return !id.empty() && id.size() <= 64 && std::all_of(id.begin(), id.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '-' || c == '_';
+    });
+}
+
+} // namespace
+
+AccountFriends GetAccountFriends() {
+    AccountFriends out;
+    const std::string bearer = Bearer();
+    if (bearer.empty()) {
+        out.error = "Not signed in.";
+        return out;
+    }
+
+    std::vector<AccountFriend> adapter_friends;
+    std::vector<AccountFriend> adapter_requests;
+    std::string adapter_error;
+    if (const auto identity = FetchSwitch(adapter_error)) {
+        for (const auto& entry : identity->value("friends", nlohmann::json::array())) {
+            adapter_friends.push_back(ParseAdapterFriend(entry));
+        }
+        for (const auto& entry : identity->value("requests", nlohmann::json::array())) {
+            adapter_requests.push_back(ParseAdapterFriend(entry));
+            adapter_requests.back().incoming = true;
+        }
+    }
+    if (Bearer().empty()) {
+        out.error = std::string{SessionExpired};
+        return out;
+    }
+
+    // The core's lists answer for an account with no Switch identity, and they are the only
+    // place outgoing requests are listed.
+    const auto core_friends = GetJson("/api/v1/me/friends", bearer);
+    const auto core_requests = GetJson("/api/v1/me/friends/requests", bearer);
+    if (!core_friends && adapter_friends.empty() && !adapter_error.empty()) {
+        out.error = adapter_error;
+        return out;
+    }
+
+    if (!adapter_friends.empty()) {
+        out.friends = std::move(adapter_friends);
+    } else if (core_friends && core_friends->contains("friends") && (*core_friends)["friends"].is_array()) {
+        for (const auto& entry : (*core_friends)["friends"]) {
+            out.friends.push_back(ParseCoreFriend(entry));
+        }
+    }
+    std::stable_sort(out.friends.begin(), out.friends.end(),
+                     [](const AccountFriend& a, const AccountFriend& b) { return a.online && !b.online; });
+
+    if (core_requests) {
+        for (const auto* key : {"incoming", "outgoing"}) {
+            if (!core_requests->contains(key) || !(*core_requests)[key].is_array()) {
+                continue;
+            }
+            for (const auto& entry : (*core_requests)[key]) {
+                AccountFriend request = ParseCoreFriend(entry);
+                request.incoming = std::string_view{key} == "incoming";
+                out.requests.push_back(std::move(request));
+            }
+        }
+    }
+    if (out.requests.empty()) {
+        out.requests = std::move(adapter_requests);
+    }
+    out.ok = true;
+    return out;
+}
+
+std::string SendFriendRequest(const std::string& friend_code) {
+    return PostAccount("/api/v1/me/friends/requests", {{"friend_code", friend_code}});
+}
+
+std::string AcceptFriendRequest(const AccountFriend& request) {
+    if (request.account_id.empty()) {
+        return FriendAction({{"action", "accept"}, {"pid", request.pid}});
+    }
+    return PostAccount("/api/v1/me/friends/requests/accept", {{"account_id", request.account_id}});
+}
+
+std::string DeclineFriendRequest(const AccountFriend& request) {
+    if (request.account_id.empty()) {
+        return FriendAction({{"action", "decline"}, {"pid", request.pid}});
+    }
+    // The reference declines and cancels through remove, which drops a pending request in
+    // either direction; /requests/decline only knows incoming ones.
+    return PostAccount("/api/v1/me/friends/remove", {{"account_id", request.account_id}});
+}
+
+std::string RemoveAccountFriend(const std::string& account_id) {
+    if (account_id.empty()) {
+        return "That player has no OpenPak account to remove.";
+    }
+    return PostAccount("/api/v1/me/friends/remove", {{"account_id", account_id}});
+}
+
+std::string BlockAccount(const std::string& account_id) {
+    if (account_id.empty()) {
+        return "That player has no OpenPak account to block.";
+    }
+    return PostAccount("/api/v1/me/friends/block", {{"account_id", account_id}});
+}
+
+std::optional<std::vector<u8>> GetAccountAvatar(const std::string& account_id) {
+    // The id goes into a path, so only the shape the site mints is accepted.
+    if (!IsTameId(account_id)) {
+        return std::nullopt;
+    }
+    return FetchPublic(fmt::format("/media/avatars/{}/256", account_id));
+}
+
+std::optional<std::vector<u8>> GetTitleIcon(const std::string& title_id_hex) {
+    if (title_id_hex.size() != 16 || !std::all_of(title_id_hex.begin(), title_id_hex.end(),
+                                                   [](unsigned char c) { return std::isxdigit(c); })) {
+        return std::nullopt;
+    }
+    return FetchPublic(fmt::format("/titles/icon/{}", title_id_hex));
 }
 
 std::string AddFriendByCode(const std::string& friend_code) {
@@ -951,22 +1198,178 @@ bool SetModFavourite(const std::string& mod_id, bool favourite) {
     return !ClearSessionIfRejected(result) && result && result->status / 100 == 2;
 }
 
+std::map<std::string, CatalogueTitle> Catalogue() {
+    std::map<std::string, CatalogueTitle> out;
+    const auto json = GetJson("/api/v1/titles", {});
+    if (!json || !json->contains("titles") || !(*json)["titles"].is_array()) {
+        return out;
+    }
+    for (const auto& title : (*json)["titles"]) {
+        // Keyed in upper case, the way the catalogue itself spells ids, so a lookup does not
+        // depend on which case the caller happened to have.
+        std::string id = Str(title, "title_id");
+        std::transform(id.begin(), id.end(), id.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        if (!id.empty()) {
+            out[id] = {Str(title, "name"), Str(title, "console"), Str(title, "status")};
+        }
+    }
+    return out;
+}
+
 std::map<std::string, std::string> CatalogueStatuses() {
     std::map<std::string, std::string> out;
-    const auto result = Send("GET", "/api/v1/titles", {}, {});
-    if (!result || result->status != 200) {
+    for (const auto& [id, title] : Catalogue()) {
+        if (!title.status.empty()) {
+            out[id] = title.status;
+        }
+    }
+    return out;
+}
+
+CloudSaves GetCloudSaves() {
+    CloudSaves out;
+    const std::string bearer = Bearer();
+    if (bearer.empty()) {
+        out.error = "Not signed in.";
+        return out;
+    }
+    const auto result = Send("GET", "/api/v1/me/saves", {}, bearer);
+    if (ClearSessionIfRejected(result)) {
+        out.error = std::string{SessionExpired};
+        return out;
+    }
+    if (!result) {
+        out.error = std::string{Unreachable};
+        return out;
+    }
+    if (result->status != 200) {
+        out.error = ErrorFrom(result->body,
+                              fmt::format("Could not load your cloud saves (HTTP {}).", result->status));
         return out;
     }
     try {
         const auto json = nlohmann::json::parse(result->body);
-        for (const auto& title : json.value("titles", nlohmann::json::array())) {
-            const std::string id = title.value("title_id", std::string{});
-            const std::string status = title.value("status", std::string{});
-            if (!id.empty() && !status.empty()) {
-                out[id] = status;
+        const auto number = [](const nlohmann::json& j, const char* key) -> u64 {
+            const auto it = j.find(key);
+            return it != j.end() && it->is_number_unsigned() ? it->get<u64>() : 0;
+        };
+        if (const auto usage = json.find("usage"); usage != json.end() && usage->is_object()) {
+            out.allowance_used = number(*usage, "allowance_used");
+            out.allowance = number(*usage, "allowance");
+        }
+        if (const auto saves = json.find("saves"); saves != json.end() && saves->is_array()) {
+            for (const auto& item : *saves) {
+                CloudSave save{Str(item, "platform"), Str(item, "title_id"), Str(item, "name"),
+                               Str(item, "icon"), {}};
+                if (const auto versions = item.find("versions");
+                    versions != item.end() && versions->is_array()) {
+                    for (const auto& v : *versions) {
+                        const auto id = v.find("id");
+                        const auto conflict = v.find("conflict");
+                        save.versions.push_back(
+                            {id != v.end() && id->is_number_integer() ? id->get<s64>() : 0,
+                             v.value("number", 0),
+                             conflict != v.end() && conflict->is_boolean() && conflict->get<bool>(),
+                             number(v, "size"), Str(v, "device"), Str(v, "saved_at")});
+                    }
+                }
+                // Newest first whatever order the site sent: the page reads versions.front().
+                std::sort(save.versions.begin(), save.versions.end(),
+                          [](const SaveVersionInfo& a, const SaveVersionInfo& b) {
+                              return a.number > b.number;
+                          });
+                out.saves.push_back(std::move(save));
             }
         }
-    } catch (const nlohmann::json::exception&) {
+        out.ok = true;
+    } catch (const nlohmann::json::exception& e) {
+        out.error = fmt::format("Unexpected saves response: {}", e.what());
+    }
+    return out;
+}
+
+std::string DeleteSaveVersion(s64 version_id) {
+    const std::string bearer = Bearer();
+    if (bearer.empty()) {
+        return "Not signed in.";
+    }
+    const auto result =
+        Send("DELETE", fmt::format("/api/v1/me/saves/versions/{}", version_id), {}, bearer);
+    if (ClearSessionIfRejected(result)) {
+        return std::string{SessionExpired};
+    }
+    if (!result) {
+        return std::string{Unreachable};
+    }
+    if (result->status / 100 != 2) {
+        return ErrorFrom(result->body, fmt::format("Could not delete it (HTTP {}).", result->status));
+    }
+    return {};
+}
+
+std::optional<std::vector<u8>> FetchSitePath(const std::string& path) {
+    // Only a path on the site: this is a value the site handed back, and it must not be able to
+    // point the request anywhere else.
+    if (!path.starts_with("/") || path.starts_with("//")) {
+        return std::nullopt;
+    }
+    return FetchPublic(path);
+}
+
+std::string StatusUrl() {
+    static const std::string url = [] {
+        if (const char* env = std::getenv("OPENPAK_STATUS"); env && *env) {
+            if (const auto sanitized = SanitizeBaseUrl(env)) {
+                return *sanitized;
+            }
+        }
+        // The status page lives beside the site: https://status.<site host>.
+        const std::string base = BaseUrl();
+        const auto authority = base.find("://");
+        return base.substr(0, authority + 3) + "status." + base.substr(authority + 3);
+    }();
+    return url;
+}
+
+ServiceStatus GetServiceStatus() {
+    ServiceStatus out;
+    out.url = StatusUrl();
+    httplib::Client client{out.url};
+    client.set_connection_timeout(TimeoutSeconds);
+    client.set_read_timeout(TimeoutSeconds);
+    client.set_follow_location(true);
+    ApplyCaCertPath(client);
+    const auto result = client.Get("/api/status", httplib::Headers{{"User-Agent", "citron-openpak"}});
+    if (!result || result->status != 200) {
+        return out;
+    }
+    try {
+        // The status page encodes its own view struct, so the keys are Go's field names.
+        const auto json = nlohmann::json::parse(result->body);
+        out.headline = Str(json, "Headline");
+        out.sub = Str(json, "Sub");
+        out.state = Str(json, "State");
+        if (const auto groups = json.find("Groups"); groups != json.end() && groups->is_array()) {
+            for (const auto& group : *groups) {
+                const auto services = group.find("Services");
+                if (services == group.end() || !services->is_array()) {
+                    continue;
+                }
+                for (const auto& service : *services) {
+                    const auto up = service.find("Up");
+                    const auto uptime = service.find("Uptime");
+                    out.services.push_back(
+                        {Str(group, "Title"), Str(service, "Name"),
+                         up != service.end() && up->is_boolean() && up->get<bool>(),
+                         uptime != service.end() && uptime->is_number() ? uptime->get<double>() : 0,
+                         Str(service, "Latency")});
+                }
+            }
+        }
+        out.ok = true;
+    } catch (const nlohmann::json::exception& e) {
+        OPENPAK_LOG_WARNING("Unexpected status page response: {}", e.what());
     }
     return out;
 }

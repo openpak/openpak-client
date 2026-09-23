@@ -40,4 +40,16 @@ bool Refresh();
 /// Refresh's second half, on statuses already fetched (title id hex -> status); for tests.
 bool Apply(const std::map<std::string, std::string>& statuses);
 
+/// The catalogue's name for a title: what the site said at the last Refresh or LoadNames, else
+/// the name this build shipped with, else empty. Never the title id -- a caller with nothing
+/// better words it for people, not for a debugger.
+std::string CatalogueName(std::uint64_t title_id);
+
+/// Asks the site for the catalogue's names once per run (Refresh does too); the account window
+/// calls this off the UI thread before it names anything. Blocking.
+void LoadNames();
+
+/// LoadNames' second half, on names already fetched (title id hex -> name); for tests.
+void ApplyNames(const std::map<std::string, std::string>& names);
+
 } // namespace openpak::compatibility

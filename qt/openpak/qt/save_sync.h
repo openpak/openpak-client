@@ -4,6 +4,7 @@
 #pragma once
 #include <filesystem>
 #include <span>
+#include <string>
 
 #include <vector>
 
@@ -40,5 +41,33 @@ std::vector<u8> CaptureOnExit(const std::filesystem::path& save_dir, u64 title_i
 // The network half of CaptureOnExit, from a detached thread. Empty on success, else why.
 std::string PushCaptured(const std::filesystem::path& save_dir, u64 title_id,
                          std::vector<u8> zip_bytes);
+
+// How the local copy stands against the newest cloud version, as the Cloud saves page words it.
+// The marker is what tells these apart: without one, a local save and a cloud save have no
+// shared history and neither can be called newer.
+enum class LocalState {
+    NoLocal,      // nothing here yet; Download brings the cloud copy
+    InStep,       // the local copy is the newest cloud version, untouched since
+    ChangedHere,  // in step once, played since: the next exit uploads it
+    CloudNewer,   // another machine uploaded after this copy was last in step
+    NoHistory,    // both exist and never met: Take cloud or Keep local decides
+};
+
+struct LocalCopy {
+    LocalState state = LocalState::NoLocal;
+    std::string version; // the cloud version the marker says it was last in step with, or empty
+    s64 last_written = 0; // unix seconds of the newest file in it, 0 when there is none
+};
+
+// Local I/O only. newest_cloud is the newest version's number, 0 when the cloud has none.
+LocalCopy Compare(const std::filesystem::path& save_dir, int newest_cloud);
+
+// The manual actions of the Cloud saves page, as the reference has them. Blocking, network; empty
+// on success, else why. Download takes the newest cloud copy even over a local one (kept beside
+// the folder as <folder>.openpak-backup, as PullBeforeLaunch keeps it): that is "take the cloud".
+// Upload sends the local copy as the version after newest_cloud (0 when the cloud has none), so
+// the server stores it as the next version rather than as a conflict: that is "keep local".
+std::string Download(const std::filesystem::path& save_dir, u64 title_id);
+std::string Upload(const std::filesystem::path& save_dir, u64 title_id, int newest_cloud);
 
 } // namespace OpenPak::SaveSync

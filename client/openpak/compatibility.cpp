@@ -28,6 +28,8 @@ constexpr Shipped kShipped[] = {
 
 std::mutex g_mutex;
 std::map<std::uint64_t, Status> g_live; ///< What the site said at the last Refresh.
+std::map<std::uint64_t, std::string> g_names; ///< The catalogue's names, from the site.
+bool g_names_loaded = false;
 
 const Shipped* FindShipped(std::uint64_t title_id) {
     const auto it = std::find_if(std::begin(kShipped), std::end(kShipped),
@@ -125,7 +127,60 @@ bool Apply(const std::map<std::string, std::string>& statuses) {
 }
 
 bool Refresh() {
-    return Apply(WebService::OpenPakApi::CatalogueStatuses());
+    std::map<std::string, std::string> statuses;
+    std::map<std::string, std::string> names;
+    for (const auto& [id, title] : WebService::OpenPakApi::Catalogue()) {
+        if (!title.status.empty()) {
+            statuses[id] = title.status;
+        }
+        names[id] = title.name;
+    }
+    ApplyNames(names);
+    return Apply(statuses);
+}
+
+void ApplyNames(const std::map<std::string, std::string>& names) {
+    std::map<std::uint64_t, std::string> parsed;
+    for (const auto& [id, name] : names) {
+        if (id.size() != 16 || name.empty()) {
+            continue;
+        }
+        try {
+            parsed[std::stoull(id, nullptr, 16)] = name;
+        } catch (const std::exception&) {
+        }
+    }
+    std::lock_guard lock{g_mutex};
+    // An empty answer is a site that could not say; the names already known stay.
+    if (!parsed.empty()) {
+        g_names = std::move(parsed);
+        g_names_loaded = true;
+    }
+}
+
+void LoadNames() {
+    {
+        std::lock_guard lock{g_mutex};
+        if (g_names_loaded) {
+            return;
+        }
+    }
+    std::map<std::string, std::string> names;
+    for (const auto& [id, title] : WebService::OpenPakApi::Catalogue()) {
+        names[id] = title.name;
+    }
+    ApplyNames(names);
+}
+
+std::string CatalogueName(std::uint64_t title_id) {
+    {
+        std::lock_guard lock{g_mutex};
+        if (const auto it = g_names.find(title_id); it != g_names.end()) {
+            return it->second;
+        }
+    }
+    const Shipped* shipped = FindShipped(title_id);
+    return shipped ? std::string{shipped->name} : std::string{};
 }
 
 } // namespace openpak::compatibility

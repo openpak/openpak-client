@@ -1107,6 +1107,16 @@ bool RefreshInvitations() {
             invitation.sender_name = invitation.sender_id;
         }
 
+        if (const auto written = item.find("messages");
+            written != item.end() && written->is_object()) {
+            for (const auto& [language, text] : written->items()) {
+                if (text.is_string() && text.get<std::string>().find_first_not_of(" \t\r\n") !=
+                                            std::string::npos) {
+                    invitation.messages[language] = text.get<std::string>();
+                }
+            }
+        }
+
         const bool known = std::any_of(previous.begin(), previous.end(),
                                        [&](const Invitation& seen) { return seen.id == invitation.id; });
 

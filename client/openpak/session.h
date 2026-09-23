@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,9 @@ struct Invitation {
     std::vector<std::uint8_t> app_param;
     std::int64_t created_at = 0;
     std::int64_t expires_at = 0;
+    /// What the sender's game wrote, by language tag ("en-US", "ja"...). A slot the game left
+    /// empty is not a message, so it is not kept.
+    std::map<std::string, std::string> messages;
 };
 
 /// Where OpenPak answers, and the CA that proves it. Set once by the host before anything

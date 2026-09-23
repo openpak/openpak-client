@@ -6,6 +6,8 @@
 #include "openpak/qt/save_sync.h"
 #include "openpak/platform.h"
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -47,6 +49,8 @@ bool IsEligible(u64 title_id) {
           Common::OpenPakAccount::IsLinked();
 }
 
+#endif // OPENPAK_HAVE_LIBARCHIVE || _WIN32
+
 bool HasLocalContent(const std::filesystem::path& dir) {
     std::error_code ec;
     if (!std::filesystem::is_directory(dir, ec)) {
@@ -59,8 +63,6 @@ bool HasLocalContent(const std::filesystem::path& dir) {
     }
     return false;
 }
-
-#endif // OPENPAK_HAVE_LIBARCHIVE || _WIN32
 
 #ifdef OPENPAK_HAVE_LIBARCHIVE
 
@@ -384,6 +386,42 @@ void WriteMarker(const std::filesystem::path& save_dir, const std::string& versi
     }
 }
 
+#if defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32)
+// Puts a cloud copy in place of the local one and records the version it is in step with. A
+// local copy is kept beside the folder first; if it cannot be kept, nothing is touched.
+bool ApplyCloud(const std::filesystem::path& save_dir, u64 title_id, const std::vector<u8>& zip,
+                const std::string& cloud) {
+    std::error_code ec;
+    if (HasLocalContent(save_dir)) {
+        const auto backup =
+            save_dir.parent_path() / (save_dir.filename().string() + ".openpak-backup");
+        std::filesystem::remove_all(backup, ec);
+        std::filesystem::copy(save_dir, backup, std::filesystem::copy_options::recursive, ec);
+        if (ec) {
+            OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: could not keep a backup ({}); local "
+                                "save kept",
+                                title_id, ec.message());
+            return false;
+        }
+    }
+    std::filesystem::create_directories(save_dir, ec);
+
+#ifdef OPENPAK_HAVE_LIBARCHIVE
+    const bool applied = UnzipToDirectory(zip, save_dir);
+#else
+    const bool applied = UnzipToDirectoryPowerShell(zip, save_dir, title_id);
+#endif
+    if (!applied) {
+        OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: archive refused -> local save kept",
+                            title_id);
+        return false;
+    }
+    WriteMarker(save_dir, cloud);
+    OPENPAK_LOG_INFO("OpenPak save pull {:016X}: version {} applied", title_id, cloud);
+    return true;
+}
+#endif
+
 } // namespace
 
 PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id) {
@@ -406,35 +444,7 @@ PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id
     if (local && known.empty()) {
         return PullOutcome::BothExist;
     }
-
-    std::error_code ec;
-    if (local) {
-        const auto backup =
-            save_dir.parent_path() / (save_dir.filename().string() + ".openpak-backup");
-        std::filesystem::remove_all(backup, ec);
-        std::filesystem::copy(save_dir, backup, std::filesystem::copy_options::recursive, ec);
-        if (ec) {
-            OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: could not keep a backup ({}); local "
-                                "save kept",
-                                title_id, ec.message());
-            return PullOutcome::Nothing;
-        }
-    }
-    std::filesystem::create_directories(save_dir, ec);
-
-#ifdef OPENPAK_HAVE_LIBARCHIVE
-    const bool applied = UnzipToDirectory(*zip, save_dir);
-#else
-    const bool applied = UnzipToDirectoryPowerShell(*zip, save_dir, title_id);
-#endif
-    if (!applied) {
-        OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: archive refused -> local save kept",
-                            title_id);
-        return PullOutcome::Nothing;
-    }
-    WriteMarker(save_dir, cloud);
-    OPENPAK_LOG_INFO("OpenPak save pull {:016X}: version {} applied", title_id, cloud);
-    return PullOutcome::Pulled;
+    return ApplyCloud(save_dir, title_id, *zip, cloud) ? PullOutcome::Pulled : PullOutcome::Nothing;
 #else
     (void)save_dir;
     (void)title_id;
@@ -486,6 +496,87 @@ std::string PushCaptured(const std::filesystem::path& save_dir, u64 title_id,
     (void)title_id;
     (void)zip_bytes;
     return {};
+#endif
+}
+
+LocalCopy Compare(const std::filesystem::path& save_dir, int newest_cloud) {
+    LocalCopy out;
+    if (save_dir.empty() || !HasLocalContent(save_dir)) {
+        return out;
+    }
+    std::error_code ec;
+    std::filesystem::file_time_type newest{};
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(save_dir, ec)) {
+        if (entry.is_regular_file(ec)) {
+            newest = std::max(newest, entry.last_write_time(ec));
+        }
+    }
+    // file_clock has no portable epoch; its distance from now is, and system_clock's epoch is
+    // the Unix one.
+    const auto age = std::filesystem::file_time_type::clock::now() - newest;
+    out.last_written = std::chrono::duration_cast<std::chrono::seconds>(
+                           (std::chrono::system_clock::now() -
+                            std::chrono::duration_cast<std::chrono::system_clock::duration>(age))
+                               .time_since_epoch())
+                           .count();
+
+    out.version = ReadMarker(save_dir);
+    if (out.version.empty()) {
+        out.state = newest_cloud > 0 ? LocalState::NoHistory : LocalState::ChangedHere;
+    } else if (out.version != std::to_string(newest_cloud)) {
+        out.state = LocalState::CloudNewer;
+    } else {
+        // In step at the last sync; a file written after the marker was played on since.
+        const auto synced = std::filesystem::last_write_time(MarkerFor(save_dir), ec);
+        out.state = !ec && newest > synced ? LocalState::ChangedHere : LocalState::InStep;
+    }
+    return out;
+}
+
+std::string Download(const std::filesystem::path& save_dir, u64 title_id) {
+#if defined(ENABLE_WEB_SERVICE) && (defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32))
+    if (save_dir.empty()) {
+        return "This emulator did not say where that game keeps its save.";
+    }
+    const std::string title = fmt::format("{:016x}", title_id);
+    const auto zip = WebService::OpenPakApi::PullSave(title);
+    if (!zip || zip->empty()) {
+        return "There is no cloud save for that game.";
+    }
+    if (!ApplyCloud(save_dir, title_id, *zip, WebService::OpenPakApi::SaveVersion(title))) {
+        return "The cloud save could not be put in place; the local one is unchanged.";
+    }
+    return {};
+#else
+    (void)save_dir;
+    (void)title_id;
+    return "This build cannot unpack cloud saves.";
+#endif
+}
+
+std::string Upload(const std::filesystem::path& save_dir, u64 title_id, int newest_cloud) {
+#ifdef ENABLE_WEB_SERVICE
+    std::vector<u8> zip = CaptureOnExit(save_dir, title_id);
+    if (zip.empty()) {
+        return "There is no local save to upload.";
+    }
+    const std::string title = fmt::format("{:016x}", title_id);
+    // Based on what the cloud has now, not on the marker: pressing Upload is the person saying
+    // this copy is the one to keep, whatever it was last in step with. The marker moves only
+    // once the server has the copy.
+    WebService::OpenPakApi::SetSaveVersion(title,
+                                           newest_cloud > 0 ? std::to_string(newest_cloud) : "");
+    std::string error = WebService::OpenPakApi::PushSave(title, zip);
+    if (!error.empty()) {
+        return error;
+    }
+    WriteMarker(save_dir, WebService::OpenPakApi::SaveVersion(title));
+    return {};
+#else
+    (void)save_dir;
+    (void)title_id;
+    (void)newest_cloud;
+    return "This build has no web services support.";
 #endif
 }
 

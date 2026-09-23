@@ -101,6 +101,45 @@ struct FriendList {
 
 FriendList GetFriends();
 
+// A friend or friend request as the account window shows it. The adapter's graph
+// (/api/v1/me/switch) is preferred because it carries the pid, friend code and friends-since; the
+// core's (/api/v1/me/friends, /api/v1/me/friends/requests) fills in when the adapter has nothing.
+struct AccountFriend {
+    std::string account_id; // empty when the pid has no OpenPak account
+    u64 pid = 0;            // 0 when the row came from the core
+    std::string display_name;
+    std::string friend_code;
+    bool online = false;
+    std::string title_id;          // 16 upper-case hex digits, empty when nothing is running
+    std::string console_namespace; // "switch", "wiiu", "3ds"...; empty when not known
+    s64 online_since = 0;          // unix seconds, 0 when not known
+    s64 friends_since = 0;         // unix seconds, 0 when not known
+    bool incoming = false;         // for a request: true when they asked
+};
+
+struct AccountFriends {
+    bool ok = false;
+    std::string error;
+    std::vector<AccountFriend> friends;  // online first, the server's order within each group
+    std::vector<AccountFriend> requests; // incoming, then outgoing
+};
+
+AccountFriends GetAccountFriends();
+
+// The window's friend actions, by account id as the website keys them. Each returns an empty
+// string on success, else a message fit to show the user. A request with no account behind it
+// (the adapter's alone) is answered through /api/v1/me/switch/friend by pid instead.
+std::string SendFriendRequest(const std::string& friend_code);
+std::string AcceptFriendRequest(const AccountFriend& request);
+std::string DeclineFriendRequest(const AccountFriend& request); // also cancels an outgoing one
+std::string RemoveAccountFriend(const std::string& account_id);
+std::string BlockAccount(const std::string& account_id);
+
+// Public pictures the site serves: an account's avatar (/media/avatars/{id}/256) and a title's
+// icon (/titles/icon/{title id}). nullopt when there is none or the id is not one.
+std::optional<std::vector<u8>> GetAccountAvatar(const std::string& account_id);
+std::optional<std::vector<u8>> GetTitleIcon(const std::string& title_id_hex);
+
 // All return an empty string on success, else a message fit to show the user.
 std::string AddFriendByCode(const std::string& friend_code);
 std::string AcceptFriend(u64 pid);
@@ -237,6 +276,10 @@ struct Profile {
     std::string mii_base64;       // profile.mii; may be empty
     std::string avatar_id;        // profile.avatar, a gallery icon id; may be empty
     std::string color_hex;        // profile.color; may be empty
+
+    std::string account_id;
+    std::string friend_code;                   // the website's; the Switch identity's wins
+    std::vector<std::string> linked_platforms; // namespaces of the consoles linked to it
 };
 
 // Uses the stored account token. Own profile only.
@@ -340,6 +383,74 @@ struct NetworkStatus {
 };
 
 NetworkStatus GetStatus();
+
+// One version of a cloud save, as GET /api/v1/me/saves lists it.
+struct SaveVersionInfo {
+    s64 id = 0;         // what the versions/{id} routes take
+    int number = 0;     // the per-title counter X-Save-Version and the version marker carry
+    bool conflict = false;
+    u64 size = 0;
+    std::string device; // the machine that uploaded it; may be empty
+    std::string saved_at; // RFC3339 UTC
+};
+
+// One title's cloud saves. name is the site's, and the site falls back to the title id when it
+// does not know the game, so callers resolve a display name themselves.
+struct CloudSave {
+    std::string platform;
+    std::string title_id;
+    std::string name;
+    std::string icon_path; // a path on the site; empty when it has no icon
+    std::vector<SaveVersionInfo> versions; // newest first
+};
+
+struct CloudSaves {
+    bool ok = false;
+    std::string error;
+    std::vector<CloudSave> saves;
+    u64 allowance_used = 0;
+    u64 allowance = 0; // 0 when the site did not say
+};
+
+// GET /api/v1/me/saves: every title with a cloud save, and how much of the allowance is used.
+CloudSaves GetCloudSaves();
+
+// DELETE /api/v1/me/saves/versions/{id}. Removes the cloud copy only. Empty on success.
+std::string DeleteSaveVersion(s64 version_id);
+
+// The bytes of an image the site serves by path (a save's icon); nullopt when there are none.
+std::optional<std::vector<u8>> FetchSitePath(const std::string& path);
+
+// The status page's verdict and per-service checks (GET {status host}/api/status). The status
+// host is OPENPAK_STATUS when set, else "status." in front of the site's own host.
+struct ServiceCheck {
+    std::string group;
+    std::string name;
+    bool up = false;
+    double uptime = 0; // percent over the page's window
+    std::string latency; // as the status page words it, e.g. "142 ms"
+};
+
+struct ServiceStatus {
+    bool ok = false;
+    std::string url;      // where it asked, for the "could not reach" line
+    std::string headline; // "All systems operational" and the like
+    std::string sub;
+    std::string state;    // ok | some | major
+    std::vector<ServiceCheck> services;
+};
+
+std::string StatusUrl();
+ServiceStatus GetServiceStatus();
+
+// The site's catalogue (GET /api/v1/titles, public): title id hex -> name and status. Empty when
+// the site could not be asked. Blocking.
+struct CatalogueTitle {
+    std::string name;
+    std::string console;
+    std::string status;
+};
+std::map<std::string, CatalogueTitle> Catalogue();
 
 // Round-trip time to the backend's /api/health in milliseconds, or nullopt on failure.
 std::optional<int> PingBackend();
