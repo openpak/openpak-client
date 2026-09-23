@@ -29,6 +29,7 @@ int main() {
 
     Account::Save(9, "new", "SW-1", "token", "bearer");
     assert(Account::UsernameOf("bbbb") == "new" && Account::UsernameOf("aaaa") == "old");
+    assert(Account::BearerOf("bbbb") == "bearer" && Account::BearerOf("aaaa").empty());
 
     profile = "aaaa";
     assert(Account::GetPid() == 7);

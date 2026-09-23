@@ -51,6 +51,9 @@ std::string HolderOf(u64 pid, const std::string& except_profile);
 // The OpenPak name the profile is signed in as, or empty when it is offline.
 std::string UsernameOf(const std::string& profile);
 
+// The website token the profile is signed in with, so a deleted profile's can be revoked.
+std::string BearerOf(const std::string& profile);
+
 // A profile was deleted: its account goes with it.
 void Forget(const std::string& profile);
 

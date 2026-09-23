@@ -297,6 +297,11 @@ std::vector<Mod> GetMods(const std::string& title_id_hex);
 std::vector<std::string> GetFavouriteModIds();
 bool SetModFavourite(const std::string& mod_id, bool favourite);
 
+// Signing out revokes the website token on the server (DELETE /api/v1/token) rather than only
+// forgetting it here: a copy of it anywhere else stops working too. Best effort, blocking; call
+// it off the UI thread.
+void RevokeToken(const std::string& bearer);
+
 // The mod's zip, verified against the sha256 the catalogue published. nullopt on a failed
 // download or a hash mismatch -- the bytes came off the network and are refused either way.
 std::optional<std::vector<u8>> DownloadModPackage(const Mod& mod);

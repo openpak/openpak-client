@@ -235,6 +235,10 @@ std::string UsernameOf(const std::string& profile) {
     return ValueOf(openpak::Platform::ReadFile(FilePath(profile)), "username");
 }
 
+std::string BearerOf(const std::string& profile) {
+    return ValueOf(openpak::Platform::ReadFile(FilePath(profile)), "bearer");
+}
+
 void Forget(const std::string& profile) {
     std::lock_guard lock{g_mutex};
 

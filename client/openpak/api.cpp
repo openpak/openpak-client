@@ -938,6 +938,12 @@ bool SetModFavourite(const std::string& mod_id, bool favourite) {
     return !ClearSessionIfRejected(result) && result && result->status / 100 == 2;
 }
 
+void RevokeToken(const std::string& bearer) {
+    if (!bearer.empty()) {
+        Send("DELETE", "/api/v1/token", {}, bearer);
+    }
+}
+
 std::optional<std::vector<u8>> DownloadModPackage(const Mod& mod) {
     auto package = FetchPublic(mod.package_url);
     if (!package) {
