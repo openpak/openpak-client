@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2026 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "openpak/qt/restore_swap.h"
+#include "openpak/qt/safe_entry_path.h"
 #include "openpak/qt/save_sync.h"
 #include "openpak/platform.h"
 
 #include <filesystem>
+#include <optional>
+#include <string>
+#include <system_error>
 #include <vector>
 
 #ifdef _WIN32
@@ -106,50 +111,107 @@ std::vector<u8> ZipDirectory(const std::filesystem::path& dir) {
     return out;
 }
 
+// ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS is deliberately absent: the path handed to
+// archive_write_disk is an absolute one this function built, and that flag would refuse it.
+// Absolute names inside the archive are refused by SafeEntryPath instead, before the join.
+constexpr int kExtractFlags = ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM |
+                               ARCHIVE_EXTRACT_SECURE_NODOTDOT |
+                               ARCHIVE_EXTRACT_SECURE_SYMLINKS;
+
 bool UnzipToDirectory(std::span<const u8> zip_data, const std::filesystem::path& dest) {
+    const std::filesystem::path staging = StagingPathFor(dest);
+    std::error_code ec;
+    std::filesystem::remove_all(staging, ec);
+    std::filesystem::create_directories(staging, ec);
+    if (ec) {
+        return false;
+    }
+
     struct archive* a = archive_read_new();
     struct archive* ext = archive_write_disk_new();
     if (!a || !ext) {
+        if (a) {
+            archive_read_free(a);
+        }
+        if (ext) {
+            archive_write_free(ext);
+        }
+        std::filesystem::remove_all(staging, ec);
         return false;
     }
 
     archive_read_support_format_zip(a);
     archive_read_support_filter_all(a);
-    archive_write_disk_set_options(ext, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM);
+    archive_write_disk_set_options(ext, kExtractFlags);
     archive_write_disk_set_standard_lookup(ext);
 
     if (archive_read_open_memory(a, zip_data.data(), zip_data.size()) != ARCHIVE_OK) {
         archive_read_free(a);
         archive_write_free(ext);
+        std::filesystem::remove_all(staging, ec);
         return false;
     }
 
-    std::filesystem::create_directories(dest);
-
+    bool ok = true;
     struct archive_entry* entry;
-    while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
-        const std::filesystem::path entry_path = dest / archive_entry_pathname(entry);
-        archive_entry_set_pathname(entry, entry_path.string().c_str());
+    int header = ARCHIVE_OK;
+    while ((header = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
+        // A save is files and directories. A symlink, a device or a hardlink in one is not a
+        // save, and the only reason to put one there is to write somewhere else.
+        const auto filetype = archive_entry_filetype(entry);
+        const char* name = archive_entry_pathname(entry);
+        if ((filetype != AE_IFREG && filetype != AE_IFDIR) || archive_entry_hardlink(entry) ||
+            archive_entry_symlink(entry) || name == nullptr) {
+            OPENPAK_LOG_ERROR("OpenPak save restore: refusing archive entry {}",
+                              name != nullptr ? name : "(unnamed)");
+            ok = false;
+            break;
+        }
+        const auto target = SafeEntryPath(staging, name);
+        if (!target) {
+            OPENPAK_LOG_ERROR("OpenPak save restore: refusing archive entry {}", name);
+            ok = false;
+            break;
+        }
+        archive_entry_set_pathname(entry, target->string().c_str());
 
         if (archive_write_header(ext, entry) != ARCHIVE_OK) {
-            continue;
+            ok = false;
+            break;
         }
         if (archive_entry_size(entry) > 0) {
             const void* buff;
             size_t size;
             la_int64_t offset;
-            while (archive_read_data_block(a, &buff, &size, &offset) == ARCHIVE_OK) {
+            int block = ARCHIVE_OK;
+            while ((block = archive_read_data_block(a, &buff, &size, &offset)) == ARCHIVE_OK) {
                 if (archive_write_data_block(ext, buff, size, offset) != ARCHIVE_OK) {
+                    ok = false;
                     break;
                 }
             }
+            if (block != ARCHIVE_EOF) {
+                ok = false;
+            }
         }
-        archive_write_finish_entry(ext);
+        if (archive_write_finish_entry(ext) != ARCHIVE_OK) {
+            ok = false;
+        }
+        if (!ok) {
+            break;
+        }
+    }
+    if (header != ARCHIVE_EOF) {
+        ok = false;
     }
 
     archive_read_free(a);
     archive_write_free(ext);
-    return true;
+    if (!ok) {
+        std::filesystem::remove_all(staging, ec);
+        return false;
+    }
+    return SwapIntoPlace(staging, dest);
 }
 
 #endif // OPENPAK_HAVE_LIBARCHIVE
@@ -186,14 +248,25 @@ std::vector<u8> ZipDirectoryPowerShell(const std::filesystem::path& dir, u64 tit
     return out;
 }
 
+// ponytail: Expand-Archive is the only unzip this build has, so entry names are judged by
+// PowerShell and not by us. Expanding into a staging directory and swapping keeps a failure
+// from eating the old save; an entry that escapes staging is a hole only a real zip reader
+// closes, which is what wiring libarchive into this target would buy.
 bool UnzipToDirectoryPowerShell(std::span<const u8> zip_data, const std::filesystem::path& dest,
                                  u64 title_id) {
-    std::filesystem::create_directories(dest);
+    const std::filesystem::path staging = StagingPathFor(dest);
+    std::error_code ec;
+    std::filesystem::remove_all(staging, ec);
+    std::filesystem::create_directories(staging, ec);
+    if (ec) {
+        return false;
+    }
     const std::filesystem::path tmp_zip = std::filesystem::temp_directory_path() /
                                            fmt::format("legacy_save_in_{:016x}.zip", title_id);
     {
         std::ofstream out(tmp_zip, std::ios::binary);
         if (!out) {
+            std::filesystem::remove_all(staging, ec);
             return false;
         }
         out.write(reinterpret_cast<const char*>(zip_data.data()),
@@ -201,12 +274,15 @@ bool UnzipToDirectoryPowerShell(std::span<const u8> zip_data, const std::filesys
     }
 
     const std::string cmd = "powershell -NoProfile -NonInteractive -Command \"Expand-Archive -Path \\\"" +
-                             tmp_zip.string() + "\\\" -DestinationPath \\\"" + dest.string() +
+                             tmp_zip.string() + "\\\" -DestinationPath \\\"" + staging.string() +
                              "\\\" -Force\"";
     const bool ok = std::system(cmd.c_str()) == 0;
-    std::error_code ec;
     std::filesystem::remove(tmp_zip, ec);
-    return ok;
+    if (!ok) {
+        std::filesystem::remove_all(staging, ec);
+        return false;
+    }
+    return SwapIntoPlace(staging, dest);
 }
 
 #endif // !OPENPAK_HAVE_LIBARCHIVE && _WIN32
@@ -239,6 +315,9 @@ void Pull(const std::filesystem::path& save_dir, u64 title_id, bool force) {
 #endif
     if (applied) {
         OPENPAK_LOG_INFO("OpenPak save pull {:016X}: applied ({} B)", title_id, zip->size());
+    } else {
+        OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: archive refused -> local save kept",
+                            title_id);
     }
 #else
     (void)title_id;

@@ -31,6 +31,12 @@ std::string GetBearer();
 // can keep serving a token minted before the account was linked.
 u64 GetGeneration();
 
+// Bearer-only accounts (Wii and DS emulators): a signed-in OpenPak account with no console
+// identity, because WFC minted none. Everything that speaks to the website — cloud saves
+// above all — works from the bearer alone; nothing else may assume a pid.
+bool HasBearer();
+void SaveBearerOnly(std::string_view username, std::string_view bearer);
+
 void Save(u64 pid, std::string_view username, std::string_view friend_code,
           std::string_view token, std::string_view bearer);
 void Clear();

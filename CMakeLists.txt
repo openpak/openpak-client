@@ -35,6 +35,12 @@ add_library(openpak::client ALIAS openpak_client)
 target_include_directories(openpak_client PUBLIC client)
 target_link_libraries(openpak_client PUBLIC fmt::fmt nlohmann_json::nlohmann_json httplib::httplib OpenSSL::SSL OpenSSL::Crypto)
 target_compile_definitions(openpak_client PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT ENABLE_WEB_SERVICE)
+# Some hosts (Dolphin) build with -fno-exceptions globally; the library and its
+# dependencies throw and catch, so they are re-enabled here no matter what a
+# host decided for itself.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(openpak_client PRIVATE -fexceptions)
+endif()
 
 if(OPENPAK_BUILD_QT)
   find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
@@ -53,12 +59,18 @@ if(OPENPAK_BUILD_QT)
   endif()
 endif()
 
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+# Tests: the client's own (standalone builds) and the save-restore guards, which are pure headers
+# with no Qt and no libarchive in them, so a build without Qt still runs them.
+if(BUILD_TESTING OR CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   enable_testing()
-  add_executable(contained_path_test tests/contained_path_test.cpp)
-  target_link_libraries(contained_path_test PRIVATE openpak::client)
-  add_test(NAME contained_path COMMAND contained_path_test)
-  add_executable(profile_account_test tests/profile_account_test.cpp)
-  target_link_libraries(profile_account_test PRIVATE openpak::client)
-  add_test(NAME profile_account COMMAND profile_account_test)
+  foreach(check contained_path profile_account)
+    add_executable(${check}_test tests/${check}_test.cpp)
+    target_link_libraries(${check}_test PRIVATE openpak::client)
+    add_test(NAME ${check} COMMAND ${check}_test)
+  endforeach()
+  foreach(check safe_entry_path restore_swap)
+    add_executable(openpak_${check}_test tests/${check}_test.cpp)
+    target_include_directories(openpak_${check}_test PRIVATE qt)
+    add_test(NAME ${check} COMMAND openpak_${check}_test)
+  endforeach()
 endif()

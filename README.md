@@ -4,12 +4,16 @@ The OpenPak client library and Qt dialogs shared by the OpenPak emulator builds:
 friends and requests, invitations, presence, recent players, play history, cloud saves, mods,
 status. Extracted from the Citron build's integration (GPL-2.0-or-later, so this library is
 too) so Eden, Azahar, Dolphin, melonDS and Cemu get the same experience without seven copies.
-PRD: `Openpak/prds/emulator-integration-prd.md`.
+PRD: `Openpak/emulators/prds/emulator-integration-prd.md`.
 
 - `client/` — `openpak::client`: the HTTP client (`WebService::OpenPakApi`), the account file
-  (`Common::OpenPakAccount`), the friend cache and outgoing-request bookkeeping. Needs a
+  (`Common::OpenPakAccount`, including bearer-only accounts for families without a console
+  identity), the friend cache and outgoing-request bookkeeping, the network profile
+  (`openpak::NetworkProfile` — fetch/validate/cache per `emulators/prds/emulator-network-profile-prd.md`),
+  and `openpak::ZipStore`, a store-only zip archiver for directory-shaped cloud saves. Needs a
   `Platform` set-up call for its directories and an optional log sink. libcurl-free: cpp-httplib
-  over OpenSSL, nlohmann/json, fmt.
+  over OpenSSL, nlohmann/json, fmt. The saves API path segment and device name are the host's
+  choice (`SetSavesPlatform`/`SetSaveDevice`: `wii` and `ds` beside `citron`).
 - `qt/` — `openpak::qt`: the account dialog (home, friends, players, history, cloud saves,
   invitations, mods, news, status), the sign-in dialog, delegates, avatar cache, toasts, online counts, save sync, network probe, chat client. A host
   implements one interface, `openpak::qt::Host` (`qt/openpak/qt/host.h`): game names and

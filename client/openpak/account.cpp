@@ -159,6 +159,24 @@ std::string GetBearer() {
     return g_bearer;
 }
 
+bool HasBearer() {
+    std::lock_guard lock{g_mutex};
+    EnsureLoaded();
+    return !g_bearer.empty();
+}
+
+void SaveBearerOnly(std::string_view username, std::string_view bearer) {
+    std::lock_guard lock{g_mutex};
+    g_loaded = true;
+    g_pid = 0;
+    g_username = username;
+    g_friend_code.clear();
+    g_token.clear();
+    g_bearer = bearer;
+    ++g_generation;
+    WriteFile();
+}
+
 u64 GetGeneration() {
     std::lock_guard lock{g_mutex};
     EnsureLoaded();
