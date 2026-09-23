@@ -23,6 +23,7 @@
 #include <QWidget>
 
 #include "openpak/api.h"
+#include "openpak/qt/strings.h"
 #include "openpak/types.h"
 
 class QLabel;
@@ -111,8 +112,6 @@ class Page : public QWidget {
 public:
     std::function<void(bool force)> reload;
 };
-
-QString Tr(const char* text);
 
 // A page that cannot apply to the host's console family (UX spec §3.6): the reason, centred, with
 // a link under it when there is somewhere to go instead. The page count and order stay the same

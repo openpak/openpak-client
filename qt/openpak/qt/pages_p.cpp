@@ -89,10 +89,6 @@ void WorkQueue::Finished() {
     }
 }
 
-QString Tr(const char* text) {
-    return QCoreApplication::translate("OpenPakAccountDialog", text);
-}
-
 QString GameName(Host* host, const std::string& title_id_hex) {
     if (title_id_hex.empty()) {
         return {};
