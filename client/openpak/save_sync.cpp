@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2026 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "openpak/qt/restore_swap.h"
-#include "openpak/qt/safe_entry_path.h"
-#include "openpak/qt/save_sync.h"
+#include "openpak/restore_swap.h"
+#include "openpak/safe_entry_path.h"
+#include "openpak/save_sync.h"
 #include "openpak/platform.h"
+#include "openpak/zip_store.h"
 
 #include <algorithm>
 #include <chrono>
@@ -38,18 +39,11 @@ namespace OpenPak::SaveSync {
 
 namespace {
 
-#if defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32)
-
-// Only ever called from the real-backend paths below (libarchive, or the Windows PowerShell
-// fallback) -- kept inside this guard so an unused-function error doesn't fire on builds with
-// neither (e.g. a non-Windows build without libarchive).
 // Every title with a signed-in account, as Ryujinx does: the old compatibility table only pins
 // the versions a title's online play needs, and says nothing about whether its save may sync.
 bool IsEligible(u64 /*title_id*/) {
     return Common::OpenPakAccount::IsLinked();
 }
-
-#endif // OPENPAK_HAVE_LIBARCHIVE || _WIN32
 
 bool HasLocalContent(const std::filesystem::path& dir) {
     std::error_code ec;
@@ -289,10 +283,50 @@ bool UnzipToDirectoryPowerShell(std::span<const u8> zip_data, const std::filesys
 
 #endif // !OPENPAK_HAVE_LIBARCHIVE && _WIN32
 
+#if !defined(OPENPAK_HAVE_LIBARCHIVE) && !defined(_WIN32)
+
+// Neither libarchive nor PowerShell (Android): the library's own zip reader and writer. It writes
+// stored entries and reads stored and, with zlib, deflated ones -- what Ryujinx and the desktop
+// builds upload -- refusing the whole archive over any entry it cannot place safely.
+bool UnzipToDirectoryStore(std::span<const u8> zip_data, const std::filesystem::path& dest) {
+    const std::filesystem::path staging = StagingPathFor(dest);
+    std::error_code ec;
+    std::filesystem::remove_all(staging, ec);
+    if (!openpak::ZipStore::UnzipToDirectory(zip_data, staging)) {
+        std::filesystem::remove_all(staging, ec);
+        return false;
+    }
+    return SwapIntoPlace(staging, dest);
+}
+
+#endif
+
+// The one zip and unzip this build has.
+std::vector<u8> ZipSave(const std::filesystem::path& dir, [[maybe_unused]] u64 title_id) {
+#if defined(OPENPAK_HAVE_LIBARCHIVE)
+    return ZipDirectory(dir);
+#elif defined(_WIN32)
+    return ZipDirectoryPowerShell(dir, title_id);
+#else
+    return openpak::ZipStore::ZipDirectory(dir);
+#endif
+}
+
+bool UnzipSave(std::span<const u8> zip, const std::filesystem::path& dest,
+               [[maybe_unused]] u64 title_id) {
+#if defined(OPENPAK_HAVE_LIBARCHIVE)
+    return UnzipToDirectory(zip, dest);
+#elif defined(_WIN32)
+    return UnzipToDirectoryPowerShell(zip, dest, title_id);
+#else
+    return UnzipToDirectoryStore(zip, dest);
+#endif
+}
+
 } // namespace
 
 void Pull(const std::filesystem::path& save_dir, u64 title_id, bool force) {
-#if defined(ENABLE_WEB_SERVICE) && (defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32))
+#if defined(ENABLE_WEB_SERVICE)
     if (!IsEligible(title_id)) {
         return;
     }
@@ -310,11 +344,7 @@ void Pull(const std::filesystem::path& save_dir, u64 title_id, bool force) {
         return;
     }
 
-#ifdef OPENPAK_HAVE_LIBARCHIVE
-    const bool applied = UnzipToDirectory(*zip, save_dir);
-#else
-    const bool applied = UnzipToDirectoryPowerShell(*zip, save_dir, title_id);
-#endif
+    const bool applied = UnzipSave(*zip, save_dir, title_id);
     if (applied) {
         OPENPAK_LOG_INFO("OpenPak save pull {:016X}: applied ({} B)", title_id, zip->size());
     } else {
@@ -327,22 +357,10 @@ void Pull(const std::filesystem::path& save_dir, u64 title_id, bool force) {
 }
 
 std::vector<u8> CaptureForPush(const std::filesystem::path& save_dir, u64 title_id) {
-#if defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32)
-    if (!IsEligible(title_id)) {
+    if (!IsEligible(title_id) || save_dir.empty()) {
         return {};
     }
-    if (save_dir.empty()) {
-        return {};
-    }
-#ifdef OPENPAK_HAVE_LIBARCHIVE
-    return ZipDirectory(save_dir);
-#else
-    return ZipDirectoryPowerShell(save_dir, title_id);
-#endif
-#else
-    (void)title_id;
-    return {};
-#endif
+    return ZipSave(save_dir, title_id);
 }
 
 void UploadCaptured(u64 title_id, std::vector<u8> zip_bytes) {
@@ -386,7 +404,6 @@ void WriteMarker(const std::filesystem::path& save_dir, const std::string& versi
     }
 }
 
-#if defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32)
 // Puts a cloud copy in place of the local one and records the version it is in step with. A
 // local copy is kept beside the folder first; if it cannot be kept, nothing is touched.
 bool ApplyCloud(const std::filesystem::path& save_dir, u64 title_id, const std::vector<u8>& zip,
@@ -406,11 +423,7 @@ bool ApplyCloud(const std::filesystem::path& save_dir, u64 title_id, const std::
     }
     std::filesystem::create_directories(save_dir, ec);
 
-#ifdef OPENPAK_HAVE_LIBARCHIVE
-    const bool applied = UnzipToDirectory(zip, save_dir);
-#else
-    const bool applied = UnzipToDirectoryPowerShell(zip, save_dir, title_id);
-#endif
+    const bool applied = UnzipSave(zip, save_dir, title_id);
     if (!applied) {
         OPENPAK_LOG_WARNING("OpenPak save pull {:016X}: archive refused -> local save kept",
                             title_id);
@@ -420,12 +433,11 @@ bool ApplyCloud(const std::filesystem::path& save_dir, u64 title_id, const std::
     OPENPAK_LOG_INFO("OpenPak save pull {:016X}: version {} applied", title_id, cloud);
     return true;
 }
-#endif
 
 } // namespace
 
 PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id) {
-#if defined(ENABLE_WEB_SERVICE) && (defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32))
+#if defined(ENABLE_WEB_SERVICE)
     if (save_dir.empty() || !Common::OpenPakAccount::IsLinked()) {
         return PullOutcome::Nothing;
     }
@@ -453,22 +465,12 @@ PullOutcome PullBeforeLaunch(const std::filesystem::path& save_dir, u64 title_id
 }
 
 std::vector<u8> CaptureOnExit(const std::filesystem::path& save_dir, u64 title_id) {
-#if defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32)
     // ponytail: every exit uploads; skipping an unchanged save needs a content hash of the
     // folder, add it if the allowance fills with identical versions (Ryujinx has the same note).
     if (save_dir.empty() || !Common::OpenPakAccount::IsLinked() || !HasLocalContent(save_dir)) {
         return {};
     }
-#ifdef OPENPAK_HAVE_LIBARCHIVE
-    return ZipDirectory(save_dir);
-#else
-    return ZipDirectoryPowerShell(save_dir, title_id);
-#endif
-#else
-    (void)save_dir;
-    (void)title_id;
-    return {};
-#endif
+    return ZipSave(save_dir, title_id);
 }
 
 std::string PushCaptured(const std::filesystem::path& save_dir, u64 title_id,
@@ -534,7 +536,7 @@ LocalCopy Compare(const std::filesystem::path& save_dir, int newest_cloud) {
 }
 
 std::string Download(const std::filesystem::path& save_dir, u64 title_id) {
-#if defined(ENABLE_WEB_SERVICE) && (defined(OPENPAK_HAVE_LIBARCHIVE) || defined(_WIN32))
+#if defined(ENABLE_WEB_SERVICE)
     if (save_dir.empty()) {
         return "This emulator did not say where that game keeps its save.";
     }

@@ -6,6 +6,12 @@
 #include <limits>
 #include <algorithm>
 #include <fstream>
+#include <optional>
+#include <string>
+
+#ifdef OPENPAK_HAVE_ZLIB
+#include <zlib.h>
+#endif
 
 namespace openpak::ZipStore {
 
@@ -62,6 +68,54 @@ constexpr std::uint32_t kLocalSig = 0x04034b50;
 constexpr std::uint32_t kCentralSig = 0x02014b50;
 constexpr std::uint32_t kEocdSig = 0x06054b50;
 constexpr std::uint16_t kStoreMethod = 0;
+constexpr std::uint16_t kDeflateMethod = 8;
+
+// Where an entry name off the network lands under root: relative, never climbing, still inside.
+std::optional<std::filesystem::path> SafePath(const std::filesystem::path& root,
+                                              const std::string& name) {
+    const std::filesystem::path rel(name);
+    if (rel.is_absolute() || rel.has_root_directory() || !rel.root_name().empty()) {
+        return std::nullopt;
+    }
+    for (const auto& part : rel) {
+        if (part == "..") {
+            return std::nullopt;
+        }
+    }
+    const std::filesystem::path full = (root / rel).lexically_normal();
+    const std::string base = (root / "").lexically_normal().string();
+    if (full.string().rfind(base, 0) != 0) {
+        return std::nullopt;
+    }
+    return full;
+}
+
+// A deflated entry, as every other zip writer makes them. Without zlib there is no inflating, and
+// the archive is refused rather than half restored.
+bool Inflate(const std::uint8_t* data, std::size_t size, std::uint32_t expected,
+             std::vector<std::uint8_t>& out) {
+#ifdef OPENPAK_HAVE_ZLIB
+    out.resize(expected);
+    z_stream stream{};
+    if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
+        return false;
+    }
+    stream.next_in = const_cast<Bytef*>(data);
+    stream.avail_in = static_cast<uInt>(size);
+    stream.next_out = out.data();
+    stream.avail_out = static_cast<uInt>(out.size());
+    const int result = inflate(&stream, Z_FINISH);
+    const bool ok = result == Z_STREAM_END && stream.total_out == expected;
+    inflateEnd(&stream);
+    return ok;
+#else
+    (void)data;
+    (void)size;
+    (void)expected;
+    (void)out;
+    return false;
+#endif
+}
 
 std::uint32_t Crc32(const std::uint8_t* data, std::size_t size) {
     static std::array<std::uint32_t, 256> table = [] {
@@ -223,53 +277,76 @@ bool UnzipToDirectory(std::span<const std::uint8_t> zip, const std::filesystem::
 
     std::error_code ec;
     std::filesystem::create_directories(dest, ec);
+    if (ec) {
+        return false;
+    }
 
     std::size_t pos = eocd.dir_offset;
     for (std::uint16_t i = 0; i < eocd.entries; i++) {
         if (pos + sizeof(CentralEntry) > zip.size()) {
-            break;
+            return false;
         }
         CentralEntry central{};
         std::memcpy(&central, zip.data() + pos, sizeof(central));
         pos += sizeof(CentralEntry);
         if (central.signature != kCentralSig) {
-            break;
+            return false;
         }
         if (pos + central.name_length + central.extra_length + central.comment_length > zip.size()) {
-            break;
+            return false;
         }
         const std::string name(reinterpret_cast<const char*>(zip.data() + pos), central.name_length);
         pos += static_cast<std::size_t>(central.name_length) + central.extra_length +
                central.comment_length;
 
-        if (central.method != kStoreMethod || !name.size() || name.back() == '/') {
-            continue; // only stored files
+        if (name.empty()) {
+            return false;
         }
-        if (name.find("..") != std::string::npos || name.front() == '/') {
-            continue; // never write outside dest
+        const auto out_path = SafePath(dest, name);
+        if (!out_path) {
+            return false; // never write outside dest
+        }
+        if (name.back() == '/') {
+            std::filesystem::create_directories(*out_path, ec);
+            continue;
         }
 
         std::size_t local = central.local_offset;
         if (local + sizeof(LocalHeader) > zip.size()) {
-            continue;
+            return false;
         }
         LocalHeader header{};
         std::memcpy(&header, zip.data() + local, sizeof(header));
         if (header.signature != kLocalSig) {
-            continue;
+            return false;
         }
         local += sizeof(LocalHeader) + header.name_length + header.extra_length;
         if (local + central.compressed_size > zip.size()) {
-            continue;
+            return false;
         }
 
-        const std::filesystem::path out_path = dest / std::filesystem::path(name);
-        std::filesystem::create_directories(out_path.parent_path(), ec);
-        std::ofstream f(out_path, std::ios::binary | std::ios::trunc);
-        if (!f) {
-            continue;
+        std::vector<std::uint8_t> inflated;
+        const std::uint8_t* data = zip.data() + local;
+        std::size_t size = central.compressed_size;
+        if (central.method == kDeflateMethod) {
+            if (!Inflate(data, size, central.uncompressed_size, inflated)) {
+                return false;
+            }
+            data = inflated.data();
+            size = inflated.size();
+        } else if (central.method != kStoreMethod) {
+            return false; // a save missing a file is a broken save, not a smaller one
         }
-        f.write(reinterpret_cast<const char*>(zip.data() + local), central.compressed_size);
+
+        std::filesystem::create_directories(out_path->parent_path(), ec);
+        std::ofstream f(*out_path, std::ios::binary | std::ios::trunc);
+        if (!f) {
+            return false;
+        }
+        f.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+        if (!f) {
+            return false;
+        }
     }
     return true;
 }
