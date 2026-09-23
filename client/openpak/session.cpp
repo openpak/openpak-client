@@ -15,6 +15,7 @@
 #include <optional>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 #include <fmt/format.h>
 #include <httplib.h>
@@ -31,6 +32,7 @@
 #include "openpak/friends_cache.h"
 #include "openpak/log.h"
 #include "openpak/platform.h"
+#include "openpak/presence_state.h"
 #include "openpak/session.h"
 
 namespace openpak::client::session {
@@ -96,12 +98,29 @@ struct State {
     std::vector<std::string> dismissed;
 
     std::function<void(const Invitation&)> on_arrival;
+    std::function<void()> on_invitations_changed;
     std::function<std::string()> current_title_id;
 
     std::thread heartbeat;
     std::condition_variable heartbeat_wake;
     std::mutex heartbeat_mutex;
     std::atomic<bool> heartbeat_running{false};
+
+    /// Work the heartbeat does between beats, guarded by heartbeat_mutex: what the running title
+    /// declared changed and is to be published now, or a sign-in just finished and the caches
+    /// want filling. Whoever raises them may be a guest's IPC thread, which must never wait on
+    /// the network itself.
+    bool presence_dirty = false;
+    bool signed_in_pending = false;
+
+    /// The presence body the server last accepted, so a publish that says nothing new is not
+    /// sent. Guarded by presence_mutex, which also keeps two publishes from crossing.
+    std::mutex presence_mutex;
+    std::string published_presence;
+
+    /// Whether the host names the running title itself (SetRunningApplication). Until it does,
+    /// the title the heartbeat's own callback reports stands in, with no presence group.
+    std::atomic<bool> host_sets_application{false};
 
     /// The heartbeat outlives everything else here, so it has to be stopped before the members it
     /// reads are destroyed. A std::thread that is still joinable when it is destroyed calls
@@ -576,58 +595,122 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
         openpak::baas::Attach(state.user_id);
     }
 
+    // A console publishes its presence again whenever it reconnects, and syncs its lists when the
+    // account becomes network-ready. Both are network calls and this may be a guest's thread, so
+    // the heartbeat does them, at once rather than at its next beat.
+    {
+        std::lock_guard wake{state.heartbeat_mutex};
+        state.signed_in_pending = true;
+    }
+    state.heartbeat_wake.notify_all();
+
     OPENPAK_LOG_INFO("[OpenPak] Signed in as {} on {}",
                      state.nickname.empty() ? state.device_id : state.nickname, state.server_host);
 
     return true;
 }
 
-void Presence(State& state, const std::string& status) {
+/// One presence body on the route a console's friends sysmodule uses. True when the server took
+/// it; anything else is not worth a louder failure than a debug line -- the account simply goes
+/// quiet, which is exactly what it should look like.
+bool SendPresence(State& state, const std::string& body) {
     std::string user_id;
     std::string device_id;
     std::string token;
-    std::function<std::string()> title_of;
     {
         std::lock_guard lock{state.mutex};
         user_id = state.user_id;
         device_id = state.device_id;
         token = state.application_token;
-        title_of = state.current_title_id;
     }
 
+    // Unauthenticated presence is a 401 by design: the server has no idea whose device is
+    // claiming to be online.
     if (user_id.empty() || device_id.empty() || token.empty()) {
-        return;
-    }
-
-    const std::string title = status == "OFFLINE" || !title_of ? std::string{} : title_of();
-
-    // While a title runs the presence says what is being played, not merely that the console is
-    // on: the friends module reads the four app fields to draw "playing X", and acdIndex goes
-    // over the wire as a JSON number because the console sends it unquoted.
-    nlohmann::json patch = nlohmann::json::array();
-    if (title.empty()) {
-        patch.push_back({{"op", "replace"}, {"path", "/presence/state"}, {"value", status}});
-    } else {
-        patch.push_back({{"op", "replace"}, {"path", "/presence/state"}, {"value", "PLAYING"}});
-        patch.push_back({{"op", "replace"},
-                         {"path", "/presence/extras/friends/appInfo:appId"},
-                         {"value", title}});
-        patch.push_back({{"op", "replace"},
-                         {"path", "/presence/extras/friends/appInfo:presenceGroupId"},
-                         {"value", title}});
-        patch.push_back({{"op", "replace"},
-                         {"path", "/presence/extras/friends/appInfo:acdIndex"},
-                         {"value", 0}});
+        return false;
     }
 
     auto baas = MakeClient(EndpointSnapshot(state), BaasHost);
 
     const auto result =
         baas->Patch(fmt::format("/1.0.0/users/{}/device_accounts/{}", user_id, device_id),
-                    Bearer(token), patch.dump(), "application/json");
+                    Bearer(token), body, "application/json-patch+json");
 
-    if (!result || result->status != 200) {
-        OPENPAK_LOG_DEBUG("[OpenPak] Presence {} did not land", status);
+    if (!result || result->status < 200 || result->status >= 300) {
+        OPENPAK_LOG_DEBUG("[OpenPak] Presence returned {}", result ? result->status : 0);
+        return false;
+    }
+
+    return true;
+}
+
+/// Publish the presence, if it is not the one already published. The module sends presence when
+/// the state or the app-field blob changes and at no other time, so a change is published here
+/// the moment it is heard of; `force` is the console's republish on reconnect, and the beat's,
+/// because the server's claim is leased. Nothing is said before a sign-in.
+void PublishPresence(State& state, bool force) {
+    std::lock_guard gate{state.presence_mutex};
+
+    const std::string body = PresenceBody();
+
+    if (!force && body == state.published_presence) {
+        return;
+    }
+
+    // Kept only once the server has it: a publish that failed is one to try again.
+    if (SendPresence(state, body)) {
+        state.published_presence = body;
+    }
+}
+
+/// Say this console is running nothing. The module has no OFFLINE to send -- INACTIVE is what it
+/// publishes when no application runs -- and the server's own lease is what turns a silent
+/// client into an offline one.
+void PublishInactive(State& state) {
+    std::lock_guard gate{state.presence_mutex};
+
+    SendPresence(state, openpak::friends::PresencePatch({}));
+
+    // Whoever speaks next -- this profile again, or the one arriving -- publishes in full.
+    state.published_presence.clear();
+}
+
+/// The heartbeat's callback, for a host that has not named the running title itself: the title
+/// it reports stands in for the running application, as its own presence group. A title that
+/// declares a group of its own in its NACP is only told apart by a host that says so.
+void FollowTitle(State& state) {
+    if (state.host_sets_application.load()) {
+        return;
+    }
+
+    std::function<std::string()> title_of;
+    {
+        std::lock_guard lock{state.mutex};
+        title_of = state.current_title_id;
+    }
+
+    std::uint64_t title = 0;
+    if (title_of) {
+        const std::string hex = title_of();
+        title = hex.empty() ? 0 : std::strtoull(hex.c_str(), nullptr, 16);
+    }
+
+    auto& presence = openpak::friends::PresenceState::Instance();
+    if (presence.Application().first != title) {
+        presence.SetRunningApplication(title, 0);
+    }
+}
+
+/// Raise the invitation-count hook, outside every lock.
+void InvitationsChanged(State& state) {
+    std::function<void()> hook;
+    {
+        std::lock_guard lock{state.mutex};
+        hook = state.on_invitations_changed;
+    }
+
+    if (hook) {
+        hook();
     }
 }
 
@@ -730,7 +813,7 @@ bool FollowProfile(State& state) {
         }
     }
 
-    Presence(state, "OFFLINE");
+    PublishInactive(state);
 
     std::lock_guard lock{state.mutex};
     if (profile == state.profile) {
@@ -946,6 +1029,12 @@ void SetInvitationHook(std::function<void(const Invitation&)> on_arrival) {
     state.on_arrival = std::move(on_arrival);
 }
 
+void SetInvitationsChangedHook(std::function<void()> on_change) {
+    State& state = Get();
+    std::lock_guard lock{state.mutex};
+    state.on_invitations_changed = std::move(on_change);
+}
+
 std::vector<Invitation> Invitations() {
     State& state = Get();
     std::lock_guard lock{state.mutex};
@@ -1029,8 +1118,10 @@ bool RefreshInvitations() {
     }
 
     std::function<void(const Invitation&)> hook;
+    bool changed;
     {
         std::lock_guard lock{state.mutex};
+        changed = state.invitations.size() != waiting.size() || !arrived.empty();
         state.invitations = waiting;
         hook = state.on_arrival;
     }
@@ -1041,6 +1132,10 @@ bool RefreshInvitations() {
         }
     }
 
+    if (changed) {
+        InvitationsChanged(state);
+    }
+
     return true;
 }
 
@@ -1048,12 +1143,18 @@ void DismissInvitation(const std::string& invitation_id) {
     State& state = Get();
 
     std::string token;
+    bool removed;
     {
         std::lock_guard lock{state.mutex};
         state.dismissed.push_back(invitation_id);
-        std::erase_if(state.invitations,
-                      [&](const Invitation& one) { return one.id == invitation_id; });
+        removed = std::erase_if(state.invitations, [&](const Invitation& one) {
+                      return one.id == invitation_id;
+                  }) != 0;
         token = state.application_token;
+    }
+
+    if (removed) {
+        InvitationsChanged(state);
     }
 
     if (token.empty()) {
@@ -1162,47 +1263,129 @@ void StartHeartbeat(std::function<std::string()> current_title_id) {
         state.current_title_id = std::move(current_title_id);
     }
 
+    // What the running title declares through friend:u is published when it changes, as the
+    // module publishes it. The declaration arrives on a guest's IPC thread, so it is only noted
+    // there and the heartbeat sends it.
+    openpak::friends::PresenceState::Instance().SetChangedCallback([&state] {
+        {
+            std::lock_guard wake{state.heartbeat_mutex};
+            state.presence_dirty = true;
+        }
+        state.heartbeat_wake.notify_all();
+    });
+
     if (state.heartbeat_running.exchange(true)) {
         return;
     }
 
     state.heartbeat = std::thread([&state] {
-        for (int tick = 0;; tick++) {
-            std::unique_lock lock{state.heartbeat_mutex};
-            state.heartbeat_wake.wait_for(lock, std::chrono::seconds(HeartbeatSeconds));
-            lock.unlock();
+        using Clock = std::chrono::steady_clock;
+        Clock::time_point next_beat = Clock::now() + std::chrono::seconds(HeartbeatSeconds);
+
+        for (int tick = 0;;) {
+            bool presence_changed = false;
+            bool signed_in = false;
+            {
+                std::unique_lock lock{state.heartbeat_mutex};
+                state.heartbeat_wake.wait_until(lock, next_beat, [&state] {
+                    return !state.heartbeat_running.load() || state.presence_dirty ||
+                           state.signed_in_pending;
+                });
+                presence_changed = std::exchange(state.presence_dirty, false);
+                signed_in = std::exchange(state.signed_in_pending, false);
+            }
 
             if (!state.heartbeat_running.load()) {
                 return;
+            }
+
+            const bool beat = Clock::now() >= next_beat;
+            if (beat) {
+                // A beat that ran long is not made up for with a burst of them.
+                next_beat = std::max(next_beat + std::chrono::seconds(HeartbeatSeconds),
+                                     Clock::now());
             }
 
             // Nothing thrown here may leave the beat: on this thread it would end the emulator,
             // and a beat that stops is presence that stops (Ryujinx lost both on a friend-list
             // change, 2026-09-22).
             try {
-                // One beat for the life of the process: across a profile switch it speaks for
-                // whoever is signed in now, which may mean signing them in first.
-                if (FollowProfile(state)) {
-                    Ensure();
+                // A console publishes its presence again whenever it reconnects, and syncs its
+                // lists when the account becomes network-ready.
+                if (signed_in) {
+                    FollowTitle(state);
+                    PublishPresence(state, true);
+                    openpak::baas::BackgroundSync();
                 }
 
-                if (tick % InvitationEveryNthBeat == 0) {
-                    RefreshInvitations();
+                if (beat) {
+                    // One beat for the life of the process: across a profile switch it speaks for
+                    // whoever is signed in now, which may mean signing them in first.
+                    if (FollowProfile(state)) {
+                        Ensure();
+                    }
+
+                    FollowTitle(state);
+
+                    // The inbox is store-and-forward and changes rarely; every third beat is
+                    // often enough to hear about an invitation while the person still cares. The
+                    // friends module's own caches ride along -- the request boxes, the friend
+                    // list at the module's 30 s cooldown, the block list, the own user and the
+                    // invitation inbox -- because a console is pushed changes to them and nothing
+                    // here holds a push connection to be pushed on.
+                    if (tick % InvitationEveryNthBeat == 0) {
+                        RefreshInvitations();
+                        openpak::baas::BackgroundSync();
+                    }
+
+                    // The website's friend list, for the hosts that still read it. NEX titles
+                    // poll friend:u in a loop and must never wait on a network call.
+                    RefreshGuestFriends();
+
+                    // Presence goes out on a change, as the module publishes it -- and once every
+                    // third beat regardless, because the server's claim is leased and a person
+                    // who has not changed game in a while would otherwise read as offline while
+                    // sitting in front of the machine.
+                    PublishPresence(state, tick % InvitationEveryNthBeat == 0);
+                } else if (presence_changed) {
+                    PublishPresence(state, false);
                 }
-
-                // The guest's own friend list, kept warm here because nothing else on this build
-                // does it. NEX titles poll friend:u in a loop and must never wait on a network
-                // call.
-                RefreshGuestFriends();
-
-                // Presence is not worth a louder failure than a debug line: the account simply
-                // goes quiet, which is exactly what it should look like.
-                Presence(state, "ONLINE");
             } catch (const std::exception& e) {
                 OPENPAK_LOG_WARNING("[OpenPak] Heartbeat beat failed: {}", e.what());
             }
+
+            if (beat) {
+                tick++;
+            }
         }
     });
+}
+
+void SetRunningApplication(std::uint64_t application_id, std::uint64_t presence_group_id) {
+    State& state = Get();
+    state.host_sets_application.store(true);
+
+    auto& presence = openpak::friends::PresenceState::Instance();
+    if (presence.Application() == std::pair{application_id,
+                                            presence_group_id != 0 ? presence_group_id
+                                                                   : application_id}) {
+        return;
+    }
+
+    presence.SetRunningApplication(application_id, presence_group_id);
+
+    // A title starting or ending is a presence change of its own: the console publishes ONLINE
+    // when an application registers and INACTIVE when none is running.
+    {
+        std::lock_guard wake{state.heartbeat_mutex};
+        state.presence_dirty = true;
+    }
+    state.heartbeat_wake.notify_all();
+}
+
+std::string PresenceBody() {
+    return openpak::friends::PresencePatch(
+        openpak::friends::PresenceState::Instance().Current(Platform::ProfileId()));
 }
 
 void ForgetProfile(const std::string& profile) {
@@ -1236,7 +1419,7 @@ void GoOffline() {
     // Nothing reaches the server when a process is closed -- a build that is gone sends nothing,
     // including "I am gone" -- so this is the one moment it can be said. If it never arrives, the
     // lease says the same thing half a minute later.
-    Presence(state, "OFFLINE");
+    PublishInactive(state);
 }
 
 } // namespace openpak::client::session

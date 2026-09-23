@@ -8,7 +8,11 @@
 #undef NDEBUG
 #include <cassert>
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <deque>
+#include <mutex>
+#include <thread>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -840,6 +844,78 @@ void AttachDetach() {
     assert(!baas::Ready() && baas::UserId().empty());
 }
 
+// ---- the background beat (the session's heartbeat calls this every third beat) ----
+
+bool SentTo(std::size_t index, const std::string& part) {
+    return index < sent.size() && sent[index].path.find(part) != std::string::npos;
+}
+
+void BackgroundSyncOrder() {
+    Reset("00000000000000aa");
+    Answer(200, R"({"items":[]})"); // inbox
+    Answer(200, R"({"items":[]})"); // outbox
+    Answer(200, "{\"items\":[" + FriendItem + "]}");
+    Answer(200, R"({"items":[]})"); // blocks
+    Answer(200, R"({"id":"00000000000000aa","nickname":"Me","thumbnailUrl":"https://example/me.jpg",
+ "links":{"friendCode":{"id":"1234-5678-9012"}}})");
+    Answer(200, R"({"items":[]})"); // invitations
+
+    baas::BackgroundSync();
+
+    // The reference's order: the request boxes, the friend list at its cooldown, then the module
+    // caches -- blocks, the own user, the invitation inbox.
+    assert(SentTo(0, "/friend_requests/inbox"));
+    assert(SentTo(1, "/friend_requests/outbox"));
+    assert(SentTo(2, "/2.0.0/users/00000000000000aa/friends?count=300"));
+    assert(SentTo(3, "/1.0.0/users/00000000000000aa/blocks"));
+    assert(SentTo(4, "/1.0.0/users/00000000000000aa"));
+    assert(SentTo(5, "/invitations/inbox"));
+    assert(baas::FriendListAvailable() && baas::BlockListAvailable() && baas::OwnUserSetting());
+
+    // The next beat inside the 30 s cooldown leaves the friend list alone.
+    sent.clear();
+    baas::BackgroundSync();
+    for (const auto& one : sent) {
+        assert(one.path.find("/friends?count=300") == std::string::npos);
+    }
+
+    // Nothing signed in, nothing asked.
+    baas::Detach();
+    sent.clear();
+    baas::BackgroundSync();
+    assert(sent.empty());
+}
+
+void RunsInTheBackground() {
+    std::mutex mutex;
+    std::condition_variable done;
+    std::vector<int> order;
+    const std::thread::id caller = std::this_thread::get_id();
+    bool elsewhere = true;
+
+    for (int i = 0; i < 3; i++) {
+        baas::RunInBackground([&, i] {
+            std::lock_guard lock{mutex};
+            elsewhere = elsewhere && std::this_thread::get_id() != caller;
+            order.push_back(i);
+            done.notify_all();
+        });
+    }
+
+    // One that throws is dropped, and the worker carries on.
+    baas::RunInBackground([] { throw std::runtime_error("dropped"); });
+    baas::RunInBackground([&] {
+        std::lock_guard lock{mutex};
+        order.push_back(3);
+        done.notify_all();
+    });
+
+    std::unique_lock lock{mutex};
+    assert(done.wait_for(lock, std::chrono::seconds(10), [&] { return order.size() == 4; }));
+    assert((order == std::vector<int>{0, 1, 2, 3}));
+    assert(elsewhere);
+}
+
 } // namespace
 
 int main() {
@@ -866,6 +942,8 @@ int main() {
     InvitationCalls();
     FriendRequestCalls();
     AttachDetach();
+    BackgroundSyncOrder();
+    RunsInTheBackground();
 
     std::filesystem::remove_all(dir);
     return 0;

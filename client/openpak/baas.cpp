@@ -7,9 +7,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <set>
+#include <thread>
 #include <utility>
 
 #include <fmt/format.h>
@@ -985,6 +988,80 @@ void BackgroundSync() {
     RefreshFriendRequests();
     SyncFriendList(false);
     SyncModuleCaches();
+}
+
+namespace {
+
+/// The worker behind RunInBackground. It lives as long as the process and is stopped and joined
+/// when the static is torn down: a detached thread would outlive the state its tasks read.
+struct Worker {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<std::function<void()>> tasks;
+    bool stopping = false;
+    std::thread thread;
+
+    ~Worker() {
+        {
+            std::lock_guard lock{mutex};
+            stopping = true;
+            tasks.clear();
+        }
+        wake.notify_all();
+
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+
+    void Run() {
+        for (;;) {
+            std::function<void()> task;
+            {
+                std::unique_lock lock{mutex};
+                wake.wait(lock, [this] { return stopping || !tasks.empty(); });
+                if (stopping) {
+                    return;
+                }
+                task = std::move(tasks.front());
+                tasks.pop_front();
+            }
+
+            try {
+                task();
+            } catch (const std::exception& e) {
+                OPENPAK_LOG_WARNING("[OpenPak] Friends background task failed: {}", e.what());
+            } catch (...) {
+                OPENPAK_LOG_WARNING("[OpenPak] Friends background task failed");
+            }
+        }
+    }
+};
+
+Worker& GetWorker() {
+    static Worker worker;
+    return worker;
+}
+
+} // namespace
+
+void RunInBackground(std::function<void()> task) {
+    if (!task) {
+        return;
+    }
+
+    Worker& worker = GetWorker();
+    {
+        std::lock_guard lock{worker.mutex};
+        if (worker.stopping) {
+            return;
+        }
+        worker.tasks.push_back(std::move(task));
+        if (!worker.thread.joinable()) {
+            worker.thread = std::thread([&worker] { worker.Run(); });
+        }
+    }
+    worker.wake.notify_one();
 }
 
 } // namespace openpak::baas

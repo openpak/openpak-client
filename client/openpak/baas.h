@@ -279,8 +279,15 @@ void SendFriendRequest(const FriendRequestSend& send);
 std::string ReceiverId(std::uint64_t network_service_account_id);
 
 /// One background beat's worth of the module's syncs, in the reference's order: the request
-/// boxes, the friend list at its cooldown, then the module caches. For a host's own poll.
+/// boxes, the friend list at its cooldown, then the module caches. The session's heartbeat calls
+/// it every third beat and once after each sign-in.
 void BackgroundSync();
+
+/// Run `task` on the module's own worker thread and return at once: the fire-and-forget the
+/// guest's writes need, because every call above blocks for a round trip and a guest's IPC thread
+/// may never wait on one. Tasks run one at a time, in the order they were handed over; one that
+/// throws is logged and dropped. Tasks still queued when the process exits are not run.
+void RunInBackground(std::function<void()> task);
 
 // ---- parsing (§1.3): which fields are required, what types they must have, and what a missing
 // one does. Unknown keys are ignored everywhere; a field of the wrong type counts as absent. ----

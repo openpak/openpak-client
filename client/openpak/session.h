@@ -99,10 +99,30 @@ std::string Link(const std::string& account_id_token);
 /// binds this device account to the person. Empty on success, else a message to show them.
 std::string LinkWithPassword(const std::string& email, const std::string& password);
 
-/// Keep saying we are here, which is the only way anyone can tell that we are, and poll the
-/// invitation inbox on the same beat. `current_title_id` answers with the 16 hex digits of
-/// whatever is running, or an empty string on the game list.
+/// Keep saying we are here, which is the only way anyone can tell that we are, and keep the
+/// friends module's caches warm on the same beat (the reference's cadence: every third beat, the
+/// invitation inbox and baas::BackgroundSync; every beat, presence when it changed, and a forced
+/// republish every third). A sign-in is followed at once by a forced publish and a
+/// BackgroundSync, as a console syncs when its account becomes network-ready.
+///
+/// `current_title_id` answers with the 16 hex digits of whatever is running, or an empty string
+/// on the game list. It is only a stand-in for a host that never calls SetRunningApplication:
+/// the title it names is published as its own presence group.
+///
+/// This takes PresenceState::Instance()'s changed callback, so that what the running title
+/// declares through friend:u is published the moment it changes.
 void StartHeartbeat(std::function<std::string()> current_title_id);
+
+/// The application that runs now and its NACP presence group id (0 when the NACP declares none,
+/// and the title id stands in), or (0, 0) when nothing runs. The host calls this when a title
+/// starts and when it stops; the change is published off the caller's thread. Presence then says
+/// INACTIVE with no title, ONLINE in one, and PLAYING only while the title has declared an
+/// online-play session (friend:u 10600/10601/10610), with the appField it set.
+void SetRunningApplication(std::uint64_t application_id, std::uint64_t presence_group_id);
+
+/// The JSON-Patch body presence would publish right now for the active profile (PresencePatch of
+/// PresenceState::Current).
+std::string PresenceBody();
 
 /// Say we are going, so the account drops offline now rather than when the lease runs out.
 void GoOffline();
@@ -128,6 +148,11 @@ void DismissInvitation(const std::string& invitation_id);
 
 /// Called once for each invitation that was not there at the previous poll.
 void SetInvitationHook(std::function<void(const Invitation&)> on_arrival);
+
+/// Called whenever the number of invitations waiting in the native inbox may have changed: one
+/// arrived, one expired, or one was dismissed. The guest's friends module answers a title's
+/// badge (22010) with the count, and tells a system screen through its notification queue.
+void SetInvitationsChangedHook(std::function<void()> on_change);
 
 /// What one request as the signed-in user produced. Status 0 is a request that could not be made
 /// at all: nothing signed in, or no answer from the server.
