@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // The network profile, implemented against the contract in network_profile.h
-// (emulators/prds/emulator-network-profile-prd.md §2 and §3). One conditional GET, two seconds, no
-// retries; the compiled-in allowlist is the ceiling; last-known-good beats a fetch and the
-// built-in default beats nothing.
+// (emulators/prds/emulator-network-profile-prd.md §2 and §3, docs/signed-ceiling.md). One
+// conditional GET, two seconds, no retries; the signed ceiling (network_ceiling.cpp) bounds what
+// is applied, name by name; last-known-good beats a fetch and the built-in default beats nothing.
 #include "openpak/network_profile.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -34,18 +35,6 @@ std::filesystem::path StoredProfilePath() {
 
 std::filesystem::path StoredEtagPath() {
     return Platform::ConfigDir() / "openpak_network_profile.etag";
-}
-
-// One entry sits inside the ceiling when it is a family itself or a name under one, on a
-// label boundary: ".nintendo.net" admits "nintendo.net" and "a.nintendo.net", not
-// "evilnintendo.net" or "a.nintendo.net.evil.example". Every family starts with its dot, so
-// ending in it is ending on a label boundary.
-bool UnderFamily(std::string const& name, std::string const& family) {
-    if (name == family || name == family.substr(1)) {
-        return true;
-    }
-    return name.size() > family.size() &&
-           name.compare(name.size() - family.size(), family.size(), family) == 0;
 }
 
 bool IsLiteralAddress(std::string const& address) {
@@ -123,28 +112,6 @@ std::string ReadStoredEtag() {
 
 }  // namespace
 
-std::vector<std::string> const& AllowedFamilies() {
-    static const std::vector<std::string> families = {
-        ".nintendo.net",   ".nintendo.com", ".nintendo.co.jp", ".nintendowifi.net",
-        ".nintendo-europe.com", ".gamespy.com", ".openpak.org",
-        // Third-party services OpenPak serves in place of their retail ones: a title that
-        // matchmakes outside Nintendo's own names can only be redirected if its family is one
-        // this build is willing to be told about.
-        ".among.us", ".photonengine.io",
-    };
-    return families;
-}
-
-bool NameAllowed(std::string const& host) {
-    std::string const lowered = Lower(host);
-    for (auto const& family : AllowedFamilies()) {
-        if (UnderFamily(lowered, family)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 std::optional<Profile> Parse(std::string const& json, std::string& error) {
     try {
         auto const doc = nlohmann::json::parse(json);
@@ -211,20 +178,9 @@ std::optional<std::string> Validate(Profile const& profile, std::string const& e
     if (IsLoopbackOrLinkLocal(profile.server_address)) {
         return "server.address is a loopback or link-local address";
     }
-    for (auto const& name : profile.suffixes) {
-        if (!NameAllowed(name)) {
-            return fmt::format("suffix {} is outside the compiled-in families", name);
-        }
-    }
-    for (auto const& name : profile.exact) {
-        if (!NameAllowed(name)) {
-            return fmt::format("exact name {} is outside the compiled-in families", name);
-        }
-    }
+    // Which names may be redirected is the ceiling's call, name by name (FilterToCeiling); only
+    // the addresses they would go to are judged here.
     for (auto const& [name, address] : profile.overrides) {
-        if (!NameAllowed(name)) {
-            return fmt::format("override {} is outside the compiled-in families", name);
-        }
         if (!IsLiteralAddress(address) || IsLoopbackOrLinkLocal(address)) {
             return fmt::format("override {} does not name a usable literal address", name);
         }
@@ -249,11 +205,15 @@ Profile BuiltIn(std::string const& platform) {
         // What a Switch reaches, exactly as the Ryujinx build carries it.
         p.suffixes = {".nintendo.net", ".nintendo.com", ".nintendo.co.jp", ".nintendowifi.net",
                       ".nintendo-europe.com"};
-        return p;
+    } else {
+        // What the Wii and DS families redirect today; the profile's job is to keep this fresh,
+        // not to define it.
+        p.suffixes = {".nintendowifi.net", ".gamespy.com", ".nintendo.net", ".openpak.org"};
     }
-    // What the Wii and DS families redirect today; the profile's job is to keep this fresh,
-    // not to define it. Hosts with their own lists keep theirs as the fallback.
-    p.suffixes = {".nintendowifi.net", ".gamespy.com", ".nintendo.net", ".openpak.org"};
+    // Inside the ceiling like anything else, and quietly: hosts ask for this per lookup.
+    auto const ceiling = CurrentCeiling();
+    auto const& families = ceiling.FamiliesFor(platform);
+    std::erase_if(p.suffixes, [&](auto const& s) { return !NameInFamilies(s, families); });
     return p;
 }
 
@@ -277,6 +237,7 @@ std::optional<Profile> LoadStored(std::string const& platform) {
         OPENPAK_LOG_WARNING("network profile: stored copy rejected: {}", *invalid);
         return std::nullopt;
     }
+    FilterToCeiling(*parsed, CurrentCeiling().FamiliesFor(platform));
     return parsed;
 }
 
@@ -399,56 +360,69 @@ Result Finish(std::string const& platform, httplib::Response const* fetch,
         return out;
     }
 
+    // Stored as the server sent it: a later ceiling may admit what this one drops.
     auto const etag = fetch->get_header_value("ETag");
     Store(platform, *fetched, etag.empty() ? etag_sent : etag);
+    FilterToCeiling(*fetched, CurrentCeiling().FamiliesFor(platform));
     out.profile = *fetched;
     out.source = Source::Fetched;
+    return out;
+}
+
+// A stored copy a 304 could stand on: it parses and validates (its names are filtered later).
+bool StoredUsable(std::string const& platform) {
+    std::ifstream f(StoredProfilePath(), std::ios::binary);
+    if (!f) {
+        return false;
+    }
+    std::string const body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::string error;
+    auto const parsed = Parse(body, error);
+    return parsed && !Validate(*parsed, platform);
+}
+
+// The ceiling first (contract rule 1), fetched beside the profile so the two share one two-second
+// wait; the stored profile is only read once the ceiling that filters it is settled.
+Result FetchWithCeiling(std::string const& platform, bool conditional, char const* verb) {
+    auto ceiling = std::async(std::launch::async, [] { return FetchCeilingEnvelope(); });
+
+    httplib::Client client(WebService::OpenPakApi::BaseUrl());
+    client.set_connection_timeout(2, 0);
+    client.set_read_timeout(2, 0);
+    WebService::OpenPakApi::ApplySystemCa(client);
+    httplib::Headers headers;
+    std::string const etag = ReadStoredEtag();
+    if (conditional && !etag.empty() && StoredUsable(platform)) {
+        headers.emplace("If-None-Match", etag);
+    }
+    auto const result =
+        client.Get(fmt::format("/api/v1/network/profile?platform={}", platform), headers);
+
+    LoadCeiling(ceiling.get());
+    Result out = Finish(platform, result ? &*result : nullptr, etag);
+    Apply(out);
+    OPENPAK_LOG_INFO("network profile: {} platform {} -> {} source, version {}", verb, platform,
+                     SourceName(out.source), out.profile.version);
+    StartWatching(platform);
     return out;
 }
 
 }  // namespace
 
 Result Fetch(std::string const& platform) {
-    auto stored = LoadStored(platform);
-    httplib::Client client(WebService::OpenPakApi::BaseUrl());
-    client.set_connection_timeout(2, 0);
-    client.set_read_timeout(2, 0);
-    WebService::OpenPakApi::ApplySystemCa(client);
-    httplib::Headers headers;
-    std::string etag;
-    if (stored) {
-        etag = ReadStoredEtag();
-        if (!etag.empty()) {
-            headers.emplace("If-None-Match", etag);
-        }
-    }
-    auto const result = client.Get(
-        fmt::format("/api/v1/network/profile?platform={}", platform), headers);
-
-    Result out = Finish(platform, result ? &*result : nullptr, etag);
-    Apply(out);
-    OPENPAK_LOG_INFO("network profile: platform {} -> {} source, version {}", platform,
-                     SourceName(out.source), out.profile.version);
-    return out;
+    return FetchWithCeiling(platform, true, "fetched");
 }
 
 Result Refresh(std::string const& platform) {
-    httplib::Client client(WebService::OpenPakApi::BaseUrl());
-    client.set_connection_timeout(2, 0);
-    client.set_read_timeout(2, 0);
-    WebService::OpenPakApi::ApplySystemCa(client);
-    auto const result =
-        client.Get(fmt::format("/api/v1/network/profile?platform={}", platform));
-    Result out = Finish(platform, result ? &*result : nullptr, ReadStoredEtag());
-    Apply(out);
-    OPENPAK_LOG_INFO("network profile: refreshed platform {} -> {} source, version {}", platform,
-                     SourceName(out.source), out.profile.version);
-    return out;
+    return FetchWithCeiling(platform, false, "refreshed");
 }
 
 void Apply(Result const& applied) {
-    std::lock_guard lock{g_applied_mutex};
-    g_applied = applied;
+    {
+        std::lock_guard lock{g_applied_mutex};
+        g_applied = applied;
+    }
+    SetDigestInUse(EffectiveDigest(applied.profile));
 }
 
 bool Loaded() {

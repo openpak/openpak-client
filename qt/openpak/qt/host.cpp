@@ -1,12 +1,46 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "openpak/qt/host.h"
 
+#include <QCoreApplication>
+#include <QMetaObject>
+
 #include <fmt/format.h>
+
+#include "openpak/network_profile.h"
+#include "openpak/qt/strings.h"
 
 namespace openpak::qt {
 static Host* g_current = nullptr;
 Host* Host::Current() { return g_current; }
-void Host::SetCurrent(Host* host) { g_current = host; }
+void Host::SetCurrent(Host* host) {
+    g_current = host;
+    if (host == nullptr) {
+        return;
+    }
+    // The re-check runs on its own thread; the host hears about it on the UI thread.
+    NetworkProfile::SetChangeNotifier([] {
+        QCoreApplication* app = QCoreApplication::instance();
+        if (app == nullptr) {
+            return;
+        }
+        QMetaObject::invokeMethod(
+            app,
+            [] {
+                if (Host* current = Host::Current()) {
+                    current->NetworkRedirectsChanged();
+                }
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+QString RedirectsChangedText(RedirectsApplied when) {
+    return when == RedirectsApplied::AtGameStart
+               ? Tr("OpenPak updated this system's network redirects. Restart the game to use "
+                    "them.")
+               : Tr("OpenPak updated this system's network redirects. Restart the emulator to "
+                    "use them.");
+}
 
 std::string Host::CloudSaveKey(u64 title_id) const {
     return fmt::format("{:016x}", title_id);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The network profile as a DNS lookup uses it: the ceiling on a label boundary, a profile that
-// names anything outside it rejected whole, and never > overrides > exact > suffixes.
+// The network profile as a DNS lookup uses it: the ceiling on a label boundary, a profile's shape
+// validated (its names are the ceiling's business, see network_ceiling_test), and
+// never > overrides > exact > suffixes.
 #undef NDEBUG // the checks are the point of this binary, in every build type
 #include <cassert>
 #include <string>
@@ -9,12 +10,14 @@
 int main() {
     namespace np = openpak::NetworkProfile;
 
-    assert(np::NameAllowed(".nintendo.net"));
-    assert(np::NameAllowed("nintendo.net"));
-    assert(np::NameAllowed("gamesync.npln.nintendo.net"));
-    assert(np::NameAllowed("Matchmaker.Among.Us"));
-    assert(!np::NameAllowed("evilnintendo.net"));
-    assert(!np::NameAllowed("a.nintendo.net.evil.example"));
+    auto const compiled = np::CompiledCeiling();
+    auto const& families = compiled.FamiliesFor("switch");
+    assert(np::NameInFamilies(".nintendo.net", families));
+    assert(np::NameInFamilies("nintendo.net", families));
+    assert(np::NameInFamilies("gamesync.npln.nintendo.net", families));
+    assert(np::NameInFamilies("Matchmaker.Among.Us", families));
+    assert(!np::NameInFamilies("evilnintendo.net", families));
+    assert(!np::NameInFamilies("a.nintendo.net.evil.example", families));
 
     // Nothing applied yet: nothing is ours to answer.
     assert(!np::Loaded());
@@ -31,9 +34,10 @@ int main() {
     assert(!np::Validate(*profile, "switch"));
     assert(np::Validate(*profile, "wiiu"));
 
+    // A name outside the ceiling is not a shape problem: it is dropped later, on its own.
     auto outside = *profile;
     outside.exact.push_back("example.com");
-    assert(np::Validate(outside, "switch"));
+    assert(!np::Validate(outside, "switch"));
     auto loopback = *profile;
     loopback.server_address = "127.0.0.1";
     assert(np::Validate(loopback, "switch"));

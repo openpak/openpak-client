@@ -219,6 +219,8 @@
   "toast.saves_pushed": "Save for {0} uploaded to OpenPak.",
   "toast.saves_push_failed": "The save for {0} did not upload: {1}",
   "toast.saves_conflict": "{0} has a save here and a different one in the cloud. Choose one on the Cloud saves page.",
+  "toast.redirects_changed_game": "OpenPak updated this system's network redirects. Restart the game to use them.",
+  "toast.redirects_changed_emulator": "OpenPak updated this system's network redirects. Restart the emulator to use them.",
   "settings.section": "OpenPak",
   "settings.account": "Account",
   "settings.enable": "Connect this emulator to OpenPak",

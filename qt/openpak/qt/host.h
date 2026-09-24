@@ -23,6 +23,11 @@ inline bool IsWfc(Family family) {
     return family == Family::Wii || family == Family::DS;
 }
 
+// The notice's words (strings/en.json): a host that applies the redirects when a game starts
+// says "Restart the game", one that applies them once per process says "Restart the emulator".
+enum class RedirectsApplied { AtGameStart, AtEmulatorStart };
+QString RedirectsChangedText(RedirectsApplied when);
+
 class Host : public QObject {
     Q_OBJECT
 public:
@@ -99,6 +104,12 @@ public:
     virtual void SetCloudSyncEnabled(bool enabled) = 0;
     virtual std::string ServerIp() const = 0;
     virtual std::string NatIp() const = 0;
+
+    // OpenPak changed the network redirects for this host's console while it runs
+    // (docs/signed-ceiling.md, rule 4): the new ones apply from the next start. Called on the UI
+    // thread, once per change, never for another console's change. The host shows a non-modal
+    // notice -- an OPENPAK toast with RedirectsChangedText() -- and never interrupts the game.
+    virtual void NetworkRedirectsChanged() {}
 
     // input: suspend the game's input while a dialog is up; a Navigation for gamepad control
     virtual void SetGuestInputSuspended(bool suspended) = 0;

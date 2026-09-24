@@ -856,6 +856,14 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>OpenPak updated this system's network redirects. Restart the game to use them.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>OpenPak updated this system's network redirects. Restart the emulator to use them.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Connect this emulator to OpenPak</source>
         <translation type="unfinished"></translation>
     </message>

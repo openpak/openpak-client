@@ -12,6 +12,9 @@
 
 #pragma once
 
+#include <array>
+#include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -63,18 +66,139 @@ struct Result {
     std::string error;      // why the fetch or the profile fell back, for the log
 };
 
-// The compiled-in ceiling: the domain families this emulator will ever redirect. The profile
-// chooses within it; an entry outside it rejects the whole profile. Shipped as a constant so
-// it is visible in review and can never be read from the network.
-std::vector<std::string> const& AllowedFamilies();
+// ---------------------------------------------------------------------------------------------
+// The ceiling (docs/signed-ceiling.md): per platform, the domain families this client may redirect
+// at all. It is a file signed with an Ed25519 key that never touches the server, fetched from the
+// pinned openpak.org origin at boot and cached; the compiled-in list below is only the first-boot
+// fallback, used while no verified ceiling has ever been cached, and is never updated again.
+// The profile chooses within the ceiling: a name outside it is dropped, individually and logged,
+// never the whole profile.
 
-// Whether one name is inside the ceiling, matched on a label boundary: "a.nintendo.net" is
-// inside ".nintendo.net", "evila.nintendo.net.evil.example" is not.
-bool NameAllowed(std::string const& host);
+// A public key a ceiling may be signed with, and its keyid (hex sha256 of the raw key).
+struct PinnedKey {
+    std::array<unsigned char, 32> key{};
+    std::string keyid;
+};
+PinnedKey MakePinnedKey(std::array<unsigned char, 32> const& raw);
+
+// The keys a ceiling is accepted under: a list, so a successor can be pinned before the current
+// key is retired.
+std::vector<PinnedKey> const& PinnedKeys();
+
+struct Ceiling {
+    long long version = 0;  // 0: the compiled fallback, never signed
+    std::string issued;
+    std::map<std::string, std::vector<std::string>> platforms;
+
+    // The platform's families; none for a platform the ceiling does not name.
+    std::vector<std::string> const& FamiliesFor(std::string const& platform) const;
+};
+
+enum class CeilingSource {
+    Fetched,  // fetched now, verified, not older than anything accepted before, cached
+    Cached,   // the cached envelope, re-verified on load
+    BuiltIn,  // nothing verified was ever cached: the compiled fallback
+};
+char const* CeilingSourceName(CeilingSource s);
+
+struct CeilingResult {
+    CeilingSource source = CeilingSource::BuiltIn;
+    Ceiling ceiling;
+    std::string error;  // why the fetched envelope (or the cache) was not used, for the log
+};
+
+// The compiled fallback: the families every earlier build carried, for every platform.
+Ceiling CompiledCeiling();
+
+// The contract's family rule: a leading dot, lower case, at least two non-empty labels of hostname
+// characters. ".ea.com" yes; ".com", ".net" and "com.au" no.
+bool FamilyWellFormed(std::string const& family);
+
+// Verifies an envelope: at least one Ed25519 signature over the decoded payload bytes that is valid
+// under a key in `keys` with that keyid, then parses those same bytes and applies the payload
+// rules (type, positive version, every family well formed -- one bad entry rejects the file).
+std::optional<Ceiling> VerifyCeiling(std::string const& envelope,
+                                     std::vector<PinnedKey> const& keys, std::string& error);
+
+// The boot decision, without I/O: the cached envelope (re-verified), the fetched one (verified and
+// accepted only when its version is at least `highest_accepted` and the cached one's), else the
+// cache, else the compiled fallback. `store` says the fetched bytes are to be cached.
+struct CeilingDecision {
+    CeilingResult result;
+    bool store = false;
+    long long highest_accepted = 0;  // what to persist afterwards
+};
+CeilingDecision DecideCeiling(std::optional<std::string> const& cached,
+                              std::optional<std::string> const& fetched,
+                              long long highest_accepted, std::vector<PinnedKey> const& keys);
+
+// GET https://openpak.org/api/v1/network/ceiling: the pinned origin, public TLS trust only (never
+// OPENPAK_API, the OpenPak CA or a URL from the profile), two seconds, one attempt. The body
+// exactly as received, or nothing.
+std::optional<std::string> FetchCeilingEnvelope();
+
+// DecideCeiling against the cache next to the other OpenPak settings, then caches the accepted
+// envelope bytes (atomically, 0600) and the highest version accepted, and makes the result the
+// process's ceiling. `fetched` nothing means "offline": the cache or the fallback.
+CeilingResult LoadCeiling(std::optional<std::string> const& fetched,
+                          std::vector<PinnedKey> const& keys = PinnedKeys());
+
+// FetchCeilingEnvelope, then LoadCeiling. Blocks up to the fetch's two seconds.
+CeilingResult RefreshCeiling();
+
+// The process's ceiling: the one LoadCeiling last produced, or -- before any -- the verified cache
+// (read without the network) or the compiled fallback.
+Ceiling CurrentCeiling();
+
+// Whether one name (or a family, leading dot) is inside `families`, on a label boundary: a family
+// covers its apex and everything below it. "a.nintendo.net" is inside ".nintendo.net",
+// "evilnintendo.net" and "a.nintendo.net.evil.example" are not. Case-insensitive.
+bool NameInFamilies(std::string const& host, std::vector<std::string> const& families);
+
+// NameInFamilies against this platform's families in CurrentCeiling().
+bool NameAllowed(std::string const& host, std::string const& platform);
+
+// Drops every suffix, exact name and override outside `families`, each one logged (unless `log`
+// is false), and returns what was dropped. `never` names stay: they only ever keep a name away
+// from OpenPak.
+std::vector<std::string> FilterToCeiling(Profile& profile, std::vector<std::string> const& families,
+                                         bool log = true);
+
+// The contract's digest of the effective redirect set: sha256 (hex) of the sorted
+// "family:<suffix>", "exact:<name>", "override:<name>=<ip>" and "address:<ip>" entries, one per
+// line. Only this platform's profile goes in, so another platform's change never changes it.
+std::string EffectiveDigest(Profile const& profile);
+
+// ---------------------------------------------------------------------------------------------
+// The change notice (contract rule 4). Apply() records the digest of what is in use. Once a Fetch
+// has run, a background thread re-checks ceiling + profile every six hours (+-10 %) and soon after
+// an OpenPak sign-in, never applying what it finds: when the new digest differs from the one in
+// use, the notifier runs once per new digest, on that background thread. The host tells the
+// player to restart the game (or the emulator) to use the new redirects.
+void SetChangeNotifier(std::function<void()> notifier);
+
+// Starts the background re-check for `platform` (idempotent; Fetch calls it).
+void StartWatching(std::string const& platform);
+
+// Asks the running re-check to look now (after a sign-in); nothing when none is running.
+void RecheckSoon();
+
+// The digest Apply() last recorded, empty before any.
+std::string DigestInUse();
+
+// Records the digest in use, for a host that applies a profile it fetched itself (Azahar's core)
+// rather than through Apply().
+void SetDigestInUse(std::string const& digest);
+
+// The notice decision on its own: true when `digest` differs from the one in use and from the last
+// one already announced, and records it as announced. Exposed for hosts that check themselves.
+bool ShouldAnnounce(std::string const& digest);
 
 // The whole of §2 of the PRD. One conditional GET with the stored ETag; 200 validates, stores
 // and applies; 304 applies the stored profile; anything else applies the stored profile; no
-// stored profile means the built-in default. Times out in two seconds, never retries.
+// stored profile means the built-in default. Times out in two seconds, never retries. The ceiling
+// is fetched beside it (same two seconds, in parallel) and the applied profile is filtered
+// through this platform's part of it. Starts the background re-check (StartWatching).
 // `platform` is one of switch, wiiu, 3ds, wii, ds.
 Result Fetch(std::string const& platform);
 
@@ -87,11 +211,13 @@ Result Refresh(std::string const& platform);
 
 // The compiled-in default, for hosts without a list of their own. Hosts that already ship one
 // (Ryujinx's wildcards, Dolphin's suffixes, Cemu's URLs) keep theirs — the profile replaces
-// what they use at runtime, this only replaces what they fall back to.
+// what they use at runtime, this only replaces what they fall back to. Filtered through this
+// platform's part of CurrentCeiling(); cheap enough to keep in a static, not to call per lookup.
 Profile BuiltIn(std::string const& platform);
 
-// Parse and validate. Parse errors and validation failures both land in `error`; a rejected
-// profile is never partially applied — the caller falls back whole.
+// Parse and validate. Validate judges the profile's shape (platform, literal usable addresses); a
+// profile it rejects is not applied at all. Which names the profile may redirect is the ceiling's
+// call, made name by name after validation (FilterToCeiling), never grounds to reject it whole.
 std::optional<Profile> Parse(std::string const& json, std::string& error);
 std::optional<std::string> Validate(Profile const& profile, std::string const& expected_platform);
 

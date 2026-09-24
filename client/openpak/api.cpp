@@ -62,6 +62,7 @@
 #include "openpak/friends_cache.h"
 #include "openpak/session.h"
 #include "openpak/api.h"
+#include "openpak/network_profile.h"
 
 namespace WebService::OpenPakApi {
 
@@ -514,6 +515,8 @@ LoginResult SignIn(const std::string& email, const std::string& password) {
     FetchCA();
     out.ok = true;
     OPENPAK_LOG_INFO("SignIn: pid={} username={}", out.pid, out.username);
+    // A sign-in is one of the moments the redirects are looked at again (signed-ceiling.md).
+    openpak::NetworkProfile::RecheckSoon();
     return out;
 }
 
@@ -549,6 +552,7 @@ LoginResult SignInAccountOnly(const std::string& email, const std::string& passw
     }
     out.ok = true;
     OPENPAK_LOG_INFO("SignInAccountOnly: signed in without a console identity");
+    openpak::NetworkProfile::RecheckSoon();
     return out;
 }
 
