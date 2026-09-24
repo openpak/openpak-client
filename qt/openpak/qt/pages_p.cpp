@@ -227,7 +227,7 @@ QPixmap Round(const QPixmap& source, int size) {
     clip.addEllipse(0, 0, size, size);
     painter.setClipPath(clip);
     // Centre-cropped to a square, so a picture that is not one is not squashed.
-    const int side = std::min(source.width(), source.height());
+    const int side = (std::min)(source.width(), source.height());
     painter.drawPixmap(QRect(0, 0, size, size), source,
                        QRect((source.width() - side) / 2, (source.height() - side) / 2, side, side));
     return out;
@@ -267,7 +267,7 @@ QPixmap Initials(const QString& name, int size) {
     const QString letter = trimmed.isEmpty() ? QStringLiteral("?") : trimmed.left(1).toUpper();
     QFont font = painter.font();
     font.setBold(true);
-    font.setPixelSize(std::max(8, size * 4 / 9));
+    font.setPixelSize((std::max)(8, size * 4 / 9));
     painter.setFont(font);
     painter.setPen(Qt::white);
     painter.drawText(QRect(0, 0, size, size), Qt::AlignCenter, letter);

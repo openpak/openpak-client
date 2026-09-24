@@ -116,7 +116,7 @@ void FillTitles(QComboBox* picker, const PageContext& context) {
         if (context.title->empty()) {
             const int running = picker->findData(
                 QString::fromStdString(context.host->GetLocalAppId()).toLower());
-            picker->setCurrentIndex(std::max(running, 0));
+            picker->setCurrentIndex((std::max)(running, 0));
             *context.title = picker->currentData().toString().toStdString();
         }
     }

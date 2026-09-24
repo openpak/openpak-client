@@ -136,7 +136,7 @@ SettingsSection::SettingsSection(Host* host_, SettingsHooks hooks_, QWidget* par
             }
         }
         const int chosen = startup->findData(hooks.startup ? hooks.startup() : QString{});
-        startup->setCurrentIndex(std::max(chosen, 0));
+        startup->setCurrentIndex((std::max)(chosen, 0));
         startup->setToolTip(Tr("Which profile opens when the emulator starts, if there is more than "
                                "one. A game started from a shortcut or launcher always uses the "
                                "last one."));
@@ -223,7 +223,7 @@ SettingsSection::SettingsSection(Host* host_, SettingsHooks hooks_, QWidget* par
     crash_reports->addItem(Tr("Always send"), QString::fromUtf8(CrashReports::kAlways.data(), static_cast<qsizetype>(CrashReports::kAlways.size())));
     crash_reports->addItem(Tr("Never send"), QString::fromUtf8(CrashReports::kNever.data(), static_cast<qsizetype>(CrashReports::kNever.size())));
     crash_reports->setCurrentIndex(
-        std::max(crash_reports->findData(QString::fromStdString(CrashReports::Policy())), 0));
+        (std::max)(crash_reports->findData(QString::fromStdString(CrashReports::Policy())), 0));
     advanced_layout->addRow(Tr("Crash reports"), crash_reports);
     advanced->hide();
     connect(advanced_toggle, &QToolButton::toggled, this, [advanced, advanced_toggle](bool open_now) {

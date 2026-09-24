@@ -74,7 +74,7 @@ std::optional<std::int64_t> Integer(const Json& parent, const char* name) {
     const Json& element = Child(parent, name);
     if (element.is_number_unsigned()) {
         const auto value = element.get<std::uint64_t>();
-        if (value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        if (value > static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
             return std::nullopt;
         }
         return static_cast<std::int64_t>(value);

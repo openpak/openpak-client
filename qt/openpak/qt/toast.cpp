@@ -136,7 +136,7 @@ protected:
     }
 
     void leaveEvent(QEvent* event) override {
-        timer.start(std::max(remaining, 1000));
+        timer.start((std::max)(remaining, 1000));
         QWidget::leaveEvent(event);
     }
 
@@ -161,7 +161,7 @@ protected:
 
         // A soft shadow: low-alpha rounded rectangles growing outward.
         painter.setPen(Qt::NoPen);
-        for (int i = S(8); i >= S(1); i -= std::max(S(1), 1)) {
+        for (int i = S(8); i >= S(1); i -= (std::max)(S(1), 1)) {
             QPainterPath layer;
             layer.addRoundedRect(card.adjusted(-i, -i + S(2), i, i + S(2)), radius + i, radius + i);
             painter.fillPath(layer, QColor(0, 0, 0, 6));
@@ -192,7 +192,7 @@ protected:
 
         QFont category_font = QApplication::font();
         category_font.setBold(true);
-        category_font.setPointSizeF(std::max((category_font.pointSizeF() - 2) * scale, 6.5 * scale));
+        category_font.setPointSizeF((std::max)((category_font.pointSizeF() - 2) * scale, 6.5 * scale));
         category_font.setLetterSpacing(QFont::AbsoluteSpacing, S(1));
         QFont text_font = QApplication::font();
         text_font.setPointSizeF(text_font.pointSizeF() * scale);
@@ -202,7 +202,7 @@ protected:
         // The text may take two lines; past that it is elided.
         const QRect text_box(text_left, 0, text_width, text_metrics.height() * 2);
         const QRect needed = text_metrics.boundingRect(text_box, Qt::TextWordWrap, text);
-        const int text_height = std::min(needed.height(), text_metrics.height() * 2);
+        const int text_height = (std::min)(needed.height(), text_metrics.height() * 2);
         const int block = category_metrics.height() + S(3) + text_height;
         int top = card.top() + (card.height() - block) / 2;
 

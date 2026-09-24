@@ -47,7 +47,7 @@ std::vector<std::uint64_t> PickFriends(Host* host, QWidget* parent, int max) {
     if (!host) {
         host = Host::Current();
     }
-    max = std::max(max, 1);
+    max = (std::max)(max, 1);
 
     QDialog dialog(parent);
     dialog.setWindowTitle(Tr("Invite friends"));
@@ -187,7 +187,7 @@ std::vector<std::uint64_t> PickFriends(Host* host, QWidget* parent, int max) {
                                  return;
                              }
                              list->setFocus();
-                             list->setCurrentRow(std::max(row, 0), QItemSelectionModel::NoUpdate);
+                             list->setCurrentRow((std::max)(row, 0), QItemSelectionModel::NoUpdate);
                              list->scrollToItem(list->currentItem());
                          });
         QObject::connect(

@@ -250,7 +250,7 @@ bool UnzipToDirectory(std::span<const std::uint8_t> zip, const std::filesystem::
     }
 
     // Scan back for the EOCD; the archive may carry a trailing comment.
-    std::size_t eocd_pos = std::numeric_limits<std::size_t>::max();
+    std::size_t eocd_pos = (std::numeric_limits<std::size_t>::max)();
     const std::size_t first_candidate = zip.size() - sizeof(EndOfCentral);
     for (std::size_t i = 0;; i++) {
         const std::size_t pos = first_candidate - i;

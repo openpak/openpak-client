@@ -94,10 +94,10 @@ public:
         const QString text = count > 99 ? QStringLiteral("99+") : QString::number(count);
         QFont font = option.font;
         font.setBold(true);
-        font.setPointSizeF(std::max(6.0, font.pointSizeF() - 2));
+        font.setPointSizeF((std::max)(6.0, font.pointSizeF() - 2));
         const QFontMetrics metrics(font);
         const int height = metrics.height() + 2;
-        const int width = std::max(height, metrics.horizontalAdvance(text) + 10);
+        const int width = (std::max)(height, metrics.horizontalAdvance(text) + 10);
         const QRect badge(option.rect.right() - width - 8,
                           option.rect.center().y() - height / 2, width, height);
         painter->save();
@@ -722,7 +722,7 @@ void OpenPakAccountDialog::OnChangeAvatar() {
         status->setText(Tr("Couldn't read that image."));
         return;
     }
-    const int side = std::min(image.width(), image.height());
+    const int side = (std::min)(image.width(), image.height());
     const QRect crop((image.width() - side) / 2, (image.height() - side) / 2, side, side);
     const QImage square =
         image.copy(crop).scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
