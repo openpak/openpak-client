@@ -3,7 +3,49 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
-## History — no releases tagged yet
+## Unreleased
+
+- Network ceiling: signed, fetched and cached; names outside it dropped one by one [e180a57]
+- Catalogue: register every regional title id, not only the first [00f3129]
+- Build fixes: Windows `min`/`max` macro guards; `nat_check` timeval types on macOS
+
+## v0.4.0 — 2026-09-23
+
+Branch `release-prep`, merged:
+
+- qt: the OpenPak window, shared dialogs, settings section and toasts as the UX spec has them;
+  what the Switch hosts need from the shared dialogs
+- strings: one English table for every emulator
+- qt: 3DS and Wii U family rows and panels; a host may bring its own TLS library
+- client: on Android without a root blob, the phone's own public roots
+
+## v0.3.0 — 2026-09-23
+
+- crash_reports: saved on a crash, offered at the next launch, sent only with consent
+
+## v0.2.0 — 2026-09-23
+
+- qt: what the Wii and DS hosts need from the UX spec
+
+## v0.1.0 — 2026-09-23
+
+Ported from Ryujinx (the reference) so every host shares it:
+
+- Sign-in chain bound to the running title; one OpenPak account per local profile; sign-in
+  dialog; the account window's seven pages and its website calls; token revoked on sign-out
+- Friends: BAAS and Five REST layer, friend structs and presence rules, block/unblock,
+  MyPage friend picker and invitation types
+- Session: presence from the title's declaration, friends caches on the heartbeat; a failing
+  heartbeat is logged, never fatal
+- Cloud saves as Ryujinx does them (pull before launch, push on exit), in the client half so
+  Android syncs too; saves for every platform
+- Network profile: one client for every host; `X-OpenPak-Client` on every request
+- Penne push connection, BCAT datasets, NAT type test, catalogue statuses refreshed live
+- Invitations, mods, news and status calls and pages
+- Android: verify public TLS with the bundled CA store [e843f7a]
+- api: sign-in sends the device name the host chose
+
+Earlier history (also in v0.1.0):
 
 - save restore: the swap that keeps a failed restore has a check behind it, and both save-restore checks run without a Qt build [09acc93]
 - save restore: judge the archive before writing it, and swap it in whole [61bddfd]
