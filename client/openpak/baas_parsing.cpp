@@ -413,10 +413,10 @@ std::vector<PlayLog> ParsePlayLog(std::string_view text) {
             continue;
         }
 
-        existing->total_play_count = std::max(existing->total_play_count, *count);
-        existing->total_play_time = std::max(existing->total_play_time, *time);
-        existing->first_played_at = std::max(existing->first_played_at, *first);
-        existing->last_played_at = std::max(existing->last_played_at, *last);
+        existing->total_play_count = (std::max)(existing->total_play_count, *count);
+        existing->total_play_time = (std::max)(existing->total_play_time, *time);
+        existing->first_played_at = (std::max)(existing->first_played_at, *first);
+        existing->last_played_at = (std::max)(existing->last_played_at, *last);
     }
 
     return entries;

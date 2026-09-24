@@ -238,7 +238,7 @@ void FillInvitation(Impl& impl, const baas::Invitation& invitation) {
     impl.sender_id = invitation.sender_id;
     impl.application_id = invitation.application_id;
     impl.application_group_id = invitation.application_group_id;
-    const std::size_t size = std::min(invitation.application_data.size(), kApplicationDataSize);
+    const std::size_t size = (std::min)(invitation.application_data.size(), kApplicationDataSize);
     impl.application_data_size = static_cast<std::uint32_t>(size);
     impl.created_at = invitation.created_at;
     impl.is_read = invitation.read ? 1 : 0;
@@ -253,14 +253,14 @@ void FillInvitationGroup(Impl& impl, const baas::InvitationGroup& group) {
     impl.sender_id = group.sender_id;
     impl.application_id = group.application_id;
     impl.application_group_id = group.application_group_id;
-    const std::size_t size = std::min(group.application_data.size(), kApplicationDataSize);
+    const std::size_t size = (std::min)(group.application_data.size(), kApplicationDataSize);
     impl.application_data_size = static_cast<std::uint32_t>(size);
     impl.created_at = group.created_at;
     impl.application_id_match = group.application_id_match ? 1 : 0;
     impl.is_valid = 1;
 
     // At most sixteen receivers, as the module's parser keeps.
-    const std::size_t receivers = std::min(group.receivers.size(), kMaxReceivers);
+    const std::size_t receivers = (std::min)(group.receivers.size(), kMaxReceivers);
     std::copy_n(group.receivers.begin(), receivers, impl.receivers);
     impl.receiver_count = static_cast<std::int32_t>(receivers);
 
@@ -370,7 +370,7 @@ private:
 // ------------------------------------------------------------------------------------------------
 
 std::size_t Utf8Fits(std::string_view encoded, std::size_t limit) {
-    std::size_t length = std::min(encoded.size(), limit);
+    std::size_t length = (std::min)(encoded.size(), limit);
     while (length > 0 && length < encoded.size() &&
            (static_cast<unsigned char>(encoded[length]) & 0xC0) == 0x80) {
         --length;
@@ -576,7 +576,7 @@ std::vector<baas::Friend> Filtered(const std::vector<baas::Friend>& friends,
     }
     if (offset > 0) {
         matched.erase(matched.begin(),
-                      matched.begin() + std::min(static_cast<std::size_t>(offset), matched.size()));
+                      matched.begin() + (std::min)(static_cast<std::size_t>(offset), matched.size()));
     }
     return matched;
 }

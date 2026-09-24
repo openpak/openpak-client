@@ -1004,7 +1004,7 @@ std::string LinkWithPassword(const std::string& email, const std::string& passwo
     const std::size_t query = location.find_first_of("?#");
     for (std::size_t at = query == std::string::npos ? location.size() : query + 1;
          at < location.size();) {
-        const std::size_t end = std::min(location.find('&', at), location.size());
+        const std::size_t end = (std::min)(location.find('&', at), location.size());
         const std::string_view pair{location.data() + at, end - at};
 
         if (pair.starts_with("code=")) {
@@ -1363,7 +1363,7 @@ void StartHeartbeat(std::function<std::string()> current_title_id) {
             const bool beat = Clock::now() >= next_beat;
             if (beat) {
                 // A beat that ran long is not made up for with a burst of them.
-                next_beat = std::max(next_beat + std::chrono::seconds(HeartbeatSeconds),
+                next_beat = (std::max)(next_beat + std::chrono::seconds(HeartbeatSeconds),
                                      Clock::now());
             }
 

@@ -192,7 +192,7 @@ long long ReadHighest() {
         return 0;
     }
     try {
-        return std::max(0LL, std::stoll(*text));
+        return (std::max)(0LL, std::stoll(*text));
     } catch (std::exception const&) {
         return 0;
     }
@@ -391,7 +391,7 @@ CeilingDecision DecideCeiling(std::optional<std::string> const& cached,
         } else {
             out.result.ceiling = *verified;
             out.result.source = CeilingSource::Cached;
-            out.highest_accepted = std::max(highest_accepted, verified->version);
+            out.highest_accepted = (std::max)(highest_accepted, verified->version);
         }
     }
 

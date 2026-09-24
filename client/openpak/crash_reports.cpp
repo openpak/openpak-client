@@ -313,7 +313,7 @@ void InstallSignalHandlers() {
 #endif // OPENPAK_CRASH_POSIX
 
 void CopyInto(char* dst, std::size_t cap, const std::string& src) {
-    const std::size_t n = std::min(src.size(), cap - 1);
+    const std::size_t n = (std::min)(src.size(), cap - 1);
     std::memcpy(dst, src.data(), n);
     dst[n] = '\0';
 }

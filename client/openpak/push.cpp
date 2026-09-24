@@ -472,7 +472,7 @@ void Start() {
                 }
             }
 
-            backoff = user_id.empty() ? 5s : held ? 2s : std::min(backoff * 2, std::chrono::seconds{300});
+            backoff = user_id.empty() ? 5s : held ? 2s : (std::min)(backoff * 2, std::chrono::seconds{300});
 
             std::unique_lock lock{state.mutex};
             state.wake.wait_for(lock, backoff, [&state] { return !state.running.load(); });

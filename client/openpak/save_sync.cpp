@@ -517,7 +517,7 @@ LocalCopy Compare(const std::filesystem::path& save_dir, int newest_cloud) {
     std::filesystem::file_time_type newest{};
     for (const auto& entry : std::filesystem::recursive_directory_iterator(save_dir, ec)) {
         if (entry.is_regular_file(ec)) {
-            newest = std::max(newest, entry.last_write_time(ec));
+            newest = (std::max)(newest, entry.last_write_time(ec));
         }
     }
     // file_clock has no portable epoch; its distance from now is, and system_clock's epoch is
