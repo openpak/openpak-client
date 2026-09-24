@@ -133,8 +133,10 @@ std::map<Endpoint, Seen> Exchange(Socket& socket, std::uint32_t type,
             fd_set read;
             FD_ZERO(&read);
             FD_SET(socket.handle, &read);
-            timeval timeout{static_cast<long>(left.count() / 1000000),
-                            static_cast<long>(left.count() % 1000000)};
+            // Each field in its own type: tv_usec is 32-bit on macOS, and a long there is a
+            // narrowing error inside braces.
+            timeval timeout{static_cast<decltype(timeval::tv_sec)>(left.count() / 1000000),
+                            static_cast<decltype(timeval::tv_usec)>(left.count() % 1000000)};
             if (::select(static_cast<int>(socket.handle) + 1, &read, nullptr, nullptr, &timeout) <= 0) {
                 break;
             }
