@@ -1243,11 +1243,22 @@ std::map<std::string, CatalogueTitle> Catalogue() {
     for (const auto& title : (*json)["titles"]) {
         // Keyed in upper case, the way the catalogue itself spells ids, so a lookup does not
         // depend on which case the caller happened to have.
-        std::string id = Str(title, "title_id");
-        std::transform(id.begin(), id.end(), id.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        if (!id.empty()) {
-            out[id] = {Str(title, "name"), Str(title, "console"), Str(title, "status")};
+        // One row, several title ids (one per region): every id gets the row, or a European
+        // copy shows no online label while the American one does.
+        std::vector<std::string> ids{Str(title, "title_id")};
+        if (title.contains("title_ids") && title["title_ids"].is_array()) {
+            for (const auto& extra : title["title_ids"]) {
+                if (extra.is_string()) {
+                    ids.push_back(extra.get<std::string>());
+                }
+            }
+        }
+        for (std::string id : ids) {
+            std::transform(id.begin(), id.end(), id.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+            if (!id.empty()) {
+                out[id] = {Str(title, "name"), Str(title, "console"), Str(title, "status")};
+            }
         }
     }
     return out;
