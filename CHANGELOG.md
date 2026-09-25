@@ -3,7 +3,7 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
-## Unreleased
+## v0.4.1 — 2026-09-25
 
 - Network ceiling: signed, fetched and cached; names outside it dropped one by one [e180a57]
 - Catalogue: register every regional title id, not only the first [00f3129]
