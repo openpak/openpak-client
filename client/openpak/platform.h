@@ -21,11 +21,15 @@ std::filesystem::path CacheDir();
 void SetProfileSource(std::function<std::string()> source);
 std::string ProfileId();
 // Which emulator this is and its build ("eden", "0.1.0-abc1234"), set once by the host at startup.
-// Every request the library makes to OpenPak says so in X-OpenPak-Client: <name>/<version>, so the
-// servers can tell the emulators apart. Not set, no header.
+// Every request the library makes to OpenPak says so in X-OpenPak-Client: <name>/<version> (<os>),
+// so the servers can tell the emulators and the platforms apart. Not set, no header.
 void SetClient(std::string name, std::string version);
-// "<name>/<version>", or empty before SetClient.
+// "<name>/<version> (<os>)", or "<name>/<version>" on a platform OsName() does not know, or empty
+// before SetClient.
 std::string ClientHeader();
+// The platform this build was compiled for: "windows", "macos", "linux", "android" or "ios"; empty
+// for anything else (the header then carries no suffix).
+std::string_view OsName();
 bool CreateParentDirs(const std::filesystem::path& path);
 bool WriteFile(const std::filesystem::path& path, const std::string& contents);
 std::string ReadFile(const std::filesystem::path& path);

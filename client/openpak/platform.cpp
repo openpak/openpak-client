@@ -7,6 +7,9 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 namespace openpak {
 static LogSink g_sink;
 void SetLogSink(LogSink sink) { g_sink = std::move(sink); }
@@ -29,9 +32,26 @@ void SetProfileSource(std::function<std::string()> source) { std::lock_guard loc
 std::string ProfileId() { std::lock_guard lock{g_profile_mutex}; return g_profile_source ? g_profile_source() : std::string{}; }
 static std::mutex g_client_mutex;
 static std::string g_client;
+std::string_view OsName() {
+#if defined(__ANDROID__)
+    return "android";
+#elif defined(_WIN32)
+    return "windows";
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+    return "ios";
+#elif defined(__APPLE__)
+    return "macos";
+#elif defined(__linux__)
+    return "linux";
+#else
+    return {};
+#endif
+}
 void SetClient(std::string name, std::string version) {
     std::lock_guard lock{g_client_mutex};
-    g_client = name.empty() ? std::string{} : name + "/" + (version.empty() ? "unknown" : version);
+    if (name.empty()) { g_client.clear(); return; }
+    g_client = name + "/" + (version.empty() ? "unknown" : version);
+    if (const std::string_view os = OsName(); !os.empty()) { g_client += " ("; g_client += os; g_client += ")"; }
 }
 std::string ClientHeader() { std::lock_guard lock{g_client_mutex}; return g_client; }
 bool CreateParentDirs(const std::filesystem::path& path) { std::error_code ec; std::filesystem::create_directories(path.parent_path(), ec); return !ec; }
