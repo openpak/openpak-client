@@ -242,6 +242,13 @@ std::shared_ptr<const std::vector<Invitation>> Invitations();
 std::optional<InvitationGroup> CachedInvitationGroup(std::uint64_t group_id);
 
 /// One user out of the cache.
+/// Put a user we already know into the cache without asking BAAS for it. The local player is the
+/// case that matters: they are never their own friend, so nothing else ever caches them, and a game
+/// that asks for its own profile alongside its friends' gets an invalid slot back (measured on
+/// Moving Out 2: three ids asked, two resolved). Their name comes with the login reply, so the
+/// first lookup of a session can be answered from it.
+void RememberUser(const User& user);
+
 std::optional<User> CachedUser(std::uint64_t id);
 
 /// The invitation inbox and every group it names (§A.5). Groups are fetched once each: a group is

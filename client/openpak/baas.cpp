@@ -870,6 +870,16 @@ std::optional<InvitationGroup> CachedInvitationGroup(std::uint64_t group_id) {
     return it != state.groups.end() ? std::optional{it->second} : std::nullopt;
 }
 
+void RememberUser(const User& user) {
+    if (user.id == 0) {
+        return;
+    }
+
+    State& state = Get();
+    std::lock_guard lock{state.cache_mutex};
+    state.users[user.id] = user;
+}
+
 std::optional<User> CachedUser(std::uint64_t id) {
     State& state = Get();
     std::lock_guard lock{state.cache_mutex};

@@ -627,6 +627,7 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
     // sysmodule itself uses (§A), as this user.
     if (!state.user_id.empty()) {
         openpak::baas::Attach(state.user_id);
+        openpak::baas::RememberUser({state.nsa_id, state.nickname, {}, {}});
     }
 
     // A console publishes its presence again whenever it reconnects, and syncs its lists when the
