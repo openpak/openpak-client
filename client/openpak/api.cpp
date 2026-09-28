@@ -1130,8 +1130,11 @@ std::vector<LobbyPlayer> GetRecentPlayers() {
 }
 
 std::string GetAvatarByPid(u64 pid) {
-    (void)pid;
-    return {};
+    // Answered nothing, so the account's picture never reached an emulator profile.
+    // ponytail: the signed-in account's own picture only, which is all any caller asks for;
+    // another player's comes with the friend list.
+    return pid != 0 && pid == Common::OpenPakAccount::GetPid() ? GetProfile().image_base64
+                                                                : std::string{};
 }
 
 std::string ReportPlayer(u64 pid, const std::string& reason, const std::string& comment) {
