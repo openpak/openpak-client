@@ -567,16 +567,6 @@ OnlineStatus GetOnlineStatus() {
     return out;
 }
 
-std::vector<u8> DownloadBcatSeed(const std::string& title_id_hex) {
-    (void)title_id_hex;
-    return {};
-}
-
-std::string HashBcatSeedHex(const std::vector<u8>& data) {
-    (void)data;
-    return {};
-}
-
 void SetSavesPlatform(const std::string& platform) {
     g_saves_platform = platform;
 }

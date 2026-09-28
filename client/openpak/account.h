@@ -57,8 +57,4 @@ std::string BearerOf(const std::string& profile);
 // A profile was deleted: its account goes with it.
 void Forget(const std::string& profile);
 
-// Mirrors the link state onto the guest SD card (sdmc_root/config/openpak/session.txt) so
-// homebrew can read its signed-in identity with a plain fopen(), no BAAS id_token needed.
-void WriteGuestBridge(const std::filesystem::path& sdmc_root);
-
 } // namespace Common::OpenPakAccount

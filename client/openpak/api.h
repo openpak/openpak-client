@@ -229,19 +229,6 @@ std::string ReportPlayer(u64 pid, const std::string& reason, const std::string& 
 void PushPresence(s32 status, const std::string& app_field, const std::string& app_id,
                   const std::string& app_name);
 
-// Downloads the BCAT schedule seed (a zip of vsdata/coopdata/fesdata) for titles that need one
-// locally to go online (Splatoon 2). title_id_hex is 16 uppercase hex digits. Empty on failure.
-//
-// Always fetches the full zip rather than relying on a conditional GET (If-Modified-Since):
-// this endpoint's Last-Modified handling isn't reliable enough to trust as the sole freshness
-// signal (an earlier Ryujinx fork hits the same server and has the same finding), so the caller should
-// hash the returned bytes with HashBcatSeedHex and compare against what's locally installed.
-std::vector<u8> DownloadBcatSeed(const std::string& title_id_hex);
-
-// Lowercase hex SHA-256 of the given bytes, for comparing a freshly downloaded BCAT seed zip
-// against the hash of what's currently installed locally.
-std::string HashBcatSeedHex(const std::vector<u8>& data);
-
 // Public, unauthenticated. Maps lowercase-hex title id -> currently connected player count.
 std::map<std::string, int> GetOnlineCounts();
 

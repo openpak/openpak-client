@@ -251,20 +251,4 @@ void Forget(const std::string& profile) {
     }
 }
 
-void WriteGuestBridge(const std::filesystem::path& sdmc_root) {
-    std::lock_guard lock{g_mutex};
-    EnsureLoaded();
-
-    const auto bridge_path = sdmc_root / "config" / "openpak" / "session.txt";
-    if (g_pid == 0) {
-        void(std::filesystem::remove(bridge_path)); // not linked -- clear any stale bridge
-        return;
-    }
-
-    void(openpak::Platform::CreateParentDirs(bridge_path));
-    const std::string contents =
-        fmt::format("pid={}\nusername={}\ntoken={}\n", g_pid, g_username, g_token);
-    void(openpak::Platform::WriteFile(bridge_path, contents));
-}
-
 } // namespace Common::OpenPakAccount
