@@ -26,10 +26,23 @@ std::filesystem::path ConfigDir() { return g_config.empty() ? std::filesystem::t
 std::filesystem::path CacheDir() { return g_cache.empty() ? ConfigDir() / "cache" : g_cache; }
 // Called under the lock: the host resets the source when what it reads goes away, and a heartbeat
 // asking at that moment must not call into it.
-static std::mutex g_profile_mutex;
-static std::function<std::string()> g_profile_source;
-void SetProfileSource(std::function<std::string()> source) { std::lock_guard lock{g_profile_mutex}; g_profile_source = std::move(source); }
-std::string ProfileId() { std::lock_guard lock{g_profile_mutex}; return g_profile_source ? g_profile_source() : std::string{}; }
+//
+// Made on first use, not at load: Android's emulator session is a static object, so its System is
+// built and sets the source while this library's own statics are still being initialised. A
+// namespace-scope std::function was then initialised after it had been set, and emptied: no active
+// profile, no redirect list, and a title sent to the publisher's real servers.
+namespace {
+struct ProfileSource {
+    std::mutex mutex;
+    std::function<std::string()> source;
+};
+ProfileSource& Profile() {
+    static ProfileSource profile;
+    return profile;
+}
+} // namespace
+void SetProfileSource(std::function<std::string()> source) { std::lock_guard lock{Profile().mutex}; Profile().source = std::move(source); }
+std::string ProfileId() { std::lock_guard lock{Profile().mutex}; return Profile().source ? Profile().source() : std::string{}; }
 static std::mutex g_client_mutex;
 static std::string g_client;
 std::string_view OsName() {
