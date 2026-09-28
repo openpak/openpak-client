@@ -116,6 +116,7 @@ struct State {
     std::string user_id;
     std::uint64_t nsa_id = 0;
     std::string nickname;
+    std::string thumbnail_url;
     std::string friend_code;
 
     std::string application_id;      ///< The bound title, 16 hex digits, or empty on the game list.
@@ -606,6 +607,7 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
 
         state.user_id = Text(user, "id");
         state.nickname = Text(user, "nickname");
+        state.thumbnail_url = Text(user, "thumbnailUrl");
 
         if (user.contains("links") && user["links"].contains("friendCode")) {
             state.friend_code = Text(user["links"]["friendCode"], "id");
@@ -627,7 +629,9 @@ bool LoginLocked(State& state, const std::string& account_id_token, std::string&
     // sysmodule itself uses (§A), as this user.
     if (!state.user_id.empty()) {
         openpak::baas::Attach(state.user_id);
-        openpak::baas::RememberUser({state.nsa_id, state.nickname, {}, {}});
+        // With the picture: a title draws the local player from this entry, and one cached without
+        // its thumbnailUrl is a player with no avatar (Moving Out 2).
+        openpak::baas::RememberUser({state.nsa_id, state.nickname, state.thumbnail_url, {}});
     }
 
     // A console publishes its presence again whenever it reconnects, and syncs its lists when the
@@ -865,6 +869,7 @@ bool FollowProfile(State& state) {
     state.user_id.clear();
     state.nsa_id = 0;
     state.nickname.clear();
+    state.thumbnail_url.clear();
     state.friend_code.clear();
     state.invitations.clear();
     state.sender_names.clear();

@@ -607,6 +607,10 @@ void UsersAndBlocks() {
     Answer(200, R"({"items":[{"id":"8","nickname":"eight","thumbnailUrl":"t"}]})");
     baas::WarmUsers({8});
     assert(sent.size() == 3 && baas::CachedUser(8));
+
+    // A user put in by hand keeps its picture: that is how the local player is drawn.
+    baas::RememberUser({9, "nine", "https://cdn/1/9", {}});
+    assert(baas::CachedUser(9)->thumbnail_url == "https://cdn/1/9");
 }
 
 void BlockCalls() {
