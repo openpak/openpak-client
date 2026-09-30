@@ -5,6 +5,10 @@ of truth; this file is the readable summary.
 
 ## Unreleased
 
+- Playability: what the catalogue says about how far *this* emulator runs a title, beside the
+  OpenPak online status. `compatibility::FindPlayability(title_id)` answers for the emulator
+  `Platform::SetClient` named and no other; nullopt is untested. Shipped in
+  `client/openpak/playability_list.inc`, overridden by `Refresh()`
 - X-OpenPak-Client names the OS: `<name>/<version> (<os>)`, one of windows, macos, linux,
   android, ios, chosen at compile time; no suffix on any other platform
 

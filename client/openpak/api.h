@@ -445,6 +445,9 @@ struct CatalogueTitle {
     std::string name;
     std::string console;
     std::string status;
+    // How far each emulator runs the title itself, canonical client name -> one of playable,
+    // ingame, menus, boots, nothing. Empty when the catalogue knows nothing about this title.
+    std::map<std::string, std::string> playability;
 };
 std::map<std::string, CatalogueTitle> Catalogue();
 

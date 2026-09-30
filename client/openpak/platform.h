@@ -27,6 +27,9 @@ void SetClient(std::string name, std::string version);
 // "<name>/<version> (<os>)", or "<name>/<version>" on a platform OsName() does not know, or empty
 // before SetClient.
 std::string ClientHeader();
+// Just the name SetClient was given ("eden", "citron"), empty before it. The one place a build
+// says which emulator it is; the catalogue's per-emulator playability is looked up with it.
+std::string ClientName();
 // The platform this build was compiled for: "windows", "macos", "linux", "android" or "ios"; empty
 // for anything else (the header then carries no suffix).
 std::string_view OsName();

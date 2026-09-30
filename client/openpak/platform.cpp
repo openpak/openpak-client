@@ -45,6 +45,7 @@ void SetProfileSource(std::function<std::string()> source) { std::lock_guard loc
 std::string ProfileId() { std::lock_guard lock{Profile().mutex}; return Profile().source ? Profile().source() : std::string{}; }
 static std::mutex g_client_mutex;
 static std::string g_client;
+static std::string g_client_name;
 std::string_view OsName() {
 #if defined(__ANDROID__)
     return "android";
@@ -62,11 +63,13 @@ std::string_view OsName() {
 }
 void SetClient(std::string name, std::string version) {
     std::lock_guard lock{g_client_mutex};
-    if (name.empty()) { g_client.clear(); return; }
+    if (name.empty()) { g_client.clear(); g_client_name.clear(); return; }
+    g_client_name = name;
     g_client = name + "/" + (version.empty() ? "unknown" : version);
     if (const std::string_view os = OsName(); !os.empty()) { g_client += " ("; g_client += os; g_client += ")"; }
 }
 std::string ClientHeader() { std::lock_guard lock{g_client_mutex}; return g_client; }
+std::string ClientName() { std::lock_guard lock{g_client_mutex}; return g_client_name; }
 bool CreateParentDirs(const std::filesystem::path& path) { std::error_code ec; std::filesystem::create_directories(path.parent_path(), ec); return !ec; }
 bool WriteFile(const std::filesystem::path& path, const std::string& contents) {
     CreateParentDirs(path);

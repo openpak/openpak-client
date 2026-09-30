@@ -1246,11 +1246,20 @@ std::map<std::string, CatalogueTitle> Catalogue() {
                 }
             }
         }
+        std::map<std::string, std::string> playability;
+        if (title.contains("playability") && title["playability"].is_object()) {
+            for (const auto& [client, word] : title["playability"].items()) {
+                if (word.is_string()) {
+                    playability[client] = word.get<std::string>();
+                }
+            }
+        }
         for (std::string id : ids) {
             std::transform(id.begin(), id.end(), id.begin(),
                            [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
             if (!id.empty()) {
-                out[id] = {Str(title, "name"), Str(title, "console"), Str(title, "status")};
+                out[id] = {Str(title, "name"), Str(title, "console"), Str(title, "status"),
+                           playability};
             }
         }
     }
