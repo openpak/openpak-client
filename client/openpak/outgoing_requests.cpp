@@ -22,7 +22,7 @@ bool g_loaded = false;
 std::vector<Entry> g_entries;
 
 std::filesystem::path FilePath() {
-    return openpak::Platform::ConfigDir() / "legacy_outgoing_requests.txt";
+    return openpak::Platform::ConfigDir() / "outgoing_requests.txt";
 }
 
 // Caller holds g_mutex.

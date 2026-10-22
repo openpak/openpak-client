@@ -222,7 +222,7 @@ bool UnzipToDirectory(std::span<const u8> zip_data, const std::filesystem::path&
 std::vector<u8> ZipDirectoryPowerShell(const std::filesystem::path& dir, u64 title_id) {
     const std::filesystem::path real_dir = dir;
     const std::filesystem::path tmp_zip =
-        std::filesystem::temp_directory_path() / fmt::format("legacy_save_{:016x}.zip", title_id);
+        std::filesystem::temp_directory_path() / fmt::format("openpak_save_{:016x}.zip", title_id);
     std::error_code ec;
     std::filesystem::remove(tmp_zip, ec);
 
@@ -258,7 +258,7 @@ bool UnzipToDirectoryPowerShell(std::span<const u8> zip_data, const std::filesys
         return false;
     }
     const std::filesystem::path tmp_zip = std::filesystem::temp_directory_path() /
-                                           fmt::format("legacy_save_in_{:016x}.zip", title_id);
+                                           fmt::format("openpak_save_in_{:016x}.zip", title_id);
     {
         std::ofstream out(tmp_zip, std::ios::binary);
         if (!out) {
