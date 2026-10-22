@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // The account window's list pages: Invitations, Cloud saves, Mods, News and Status, as the
-// reference draws them. Their network work goes through the window's one queue; what comes back
+// earlier port draws them. Their network work goes through the window's one queue; what comes back
 // is drawn on the UI thread, where the host is asked for names, icons and save folders.
 
 #include "openpak/qt/extra_pages.h"
@@ -294,7 +294,7 @@ Page* MakeInvitationsPage(const PageContext& context) {
         }
         row_layout->addLayout(text, 1);
 
-        // Join launches the title and closes the window first, as the reference does; the host's
+        // Join launches the title and closes the window first, as the earlier port does; the host's
         // own poll is what hands the join payload to the guest once it runs.
         QPushButton* join = TextButton(Tr("Join"));
         QObject::connect(join, &QPushButton::clicked, page, [=] {
@@ -1109,7 +1109,7 @@ Page* MakeStatusPage(const PageContext& context) {
             page,
             [address] {
                 compatibility::LoadNames();
-                // The three answer independently, so they are asked at once, as the reference asks.
+                // The three answer independently, so they are asked at once, as the earlier port asks.
                 auto counts = std::async(std::launch::async, [] { return Api::GetStatus(); });
                 auto checks = std::async(std::launch::async, [] { return Api::GetServiceStatus(); });
                 const int edge = ProbeEdge(address);

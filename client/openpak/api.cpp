@@ -978,7 +978,7 @@ std::string DeclineFriendRequest(const AccountFriend& request) {
     if (request.account_id.empty()) {
         return FriendAction({{"action", "decline"}, {"pid", request.pid}});
     }
-    // The reference declines and cancels through remove, which drops a pending request in
+    // The earlier port declines and cancels through remove, which drops a pending request in
     // either direction; /requests/decline only knows incoming ones.
     return PostAccount("/api/v1/me/friends/remove", {{"account_id", request.account_id}});
 }

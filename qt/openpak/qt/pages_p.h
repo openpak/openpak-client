@@ -36,7 +36,7 @@ namespace openpak::qt {
 
 class Host;
 
-// The window's network work, one job at a time in the order it was asked for, as the reference's
+// The window's network work, one job at a time in the order it was asked for, as the earlier port's
 // Guarded gate runs it: a page that asks for two things on the way in gets both, and a refresh
 // asked for while another is running waits its turn instead of being dropped. The work runs on
 // the queue's own thread; its result comes back on the UI thread, and only while both the owner
@@ -88,7 +88,7 @@ struct PageContext {
     std::function<void(const QString&)> status;
     // The window's own confirmation card; true when the person said yes.
     std::function<bool(const QString& title, const QString& message, const QString& yes)> confirm;
-    // Closes the window, which the reference does before it launches a game.
+    // Closes the window, which the earlier port does before it launches a game.
     std::function<void()> close;
     // Opens the window at another page (OpenPakAccountDialog::k*Page).
     std::function<void(int page)> go_to;
@@ -99,7 +99,7 @@ struct PageContext {
     std::function<void()> friends_changed;
     std::function<void(u64 pid, const QString& name)> invite_to_chat;
     // The title Cloud saves, Mods and News have picked, as 16 lower-case hex digits: one choice
-    // shared by the three, as the reference shares its SelectedTitle.
+    // shared by the three, as the earlier port shares its SelectedTitle.
     std::shared_ptr<std::string> title;
 };
 
@@ -147,7 +147,7 @@ QPixmap Round(const QPixmap& source, int size);
 QPixmap RoundedRect(const QPixmap& source, int size, int radius);
 
 // A picture fetched once per run and remembered (misses too), shown when it arrives. Pictures
-// load in parallel, beside the queue rather than through it, as the reference loads them: a row
+// load in parallel, beside the queue rather than through it, as the earlier port loads them: a row
 // never waits on another row's avatar. fetch runs off the UI thread; show runs on it, only while
 // owner is alive.
 void Picture(QWidget* owner, const std::string& key,

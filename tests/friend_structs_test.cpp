@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The guest's friends structs and the presence state, ported from the the earlier Ryujinx port's
+// The guest's friends structs and the presence state, ported from OpenPak's earlier Ryujinx port's
 // OpenPakFriendStructTests.cs and the struct parts of OpenPakFriendRequestTests.cs: sizes, the
 // offsets the audit pins, what the builders put in them, the appField <-> blob conversion both
 // ways, and the presence declaration rules of OpenPakPresence.cs.

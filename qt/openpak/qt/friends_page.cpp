@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 OpenPak
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// The Friends page, as the reference's: requests in both directions above the friends, a friend
+// The Friends page, as the earlier port's: requests in both directions above the friends, a friend
 // as a card that opens to show what they are playing and since when, and every action by the
 // account id the website keys friends on.
 
@@ -118,7 +118,7 @@ Page* MakeFriendsPage(const PageContext& context) {
         return entry.account_id.empty() ? std::to_string(entry.pid) : entry.account_id;
     };
 
-    // A change to the friend graph, as the reference's MutateAsync: the server's reason or
+    // A change to the friend graph, as the earlier port's MutateAsync: the server's reason or
     // nothing in the status line, then everything reloaded. Friends of the guest's friend
     // service come from the host's cache, so that is refreshed too.
     const auto mutate = [page, context](std::function<std::string()> work, QString done_text = {}) {
@@ -285,7 +285,7 @@ Page* MakeFriendsPage(const PageContext& context) {
             show_open(open);
         };
 
-        // What the old list offered beside the reference's actions: joining a friend's session
+        // What the old list offered beside the earlier port's actions: joining a friend's session
         // and a chat invitation, both keyed by the pid only the adapter's rows carry.
         card->setContextMenuPolicy(Qt::CustomContextMenu);
         QObject::connect(card, &QWidget::customContextMenuRequested, card, [=](const QPoint& at) {

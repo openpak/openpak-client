@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 OpenPak
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// The builders behind friend_structs.h, ported from the the earlier Ryujinx port's OpenPakFriends.cs
+// The builders behind friend_structs.h, ported from OpenPak's earlier Ryujinx port's OpenPakFriends.cs
 // and OpenPakFriends.Structs.cs.
 
 #include "openpak/friend_structs.h"
@@ -110,7 +110,7 @@ std::string Utf8Lossy(std::string_view bytes) {
     return out;
 }
 
-/// TryHexText, as the reference parses a catalog id half: leading spaces, an optional '+', an
+/// TryHexText, as the earlier port parses a catalog id half: leading spaces, an optional '+', an
 /// optional 0x, then the run of hex digits that follows (1 to 16 of them). What comes after
 /// the run is not looked at.
 bool TryHexText(std::string_view text, std::uint64_t& value) {

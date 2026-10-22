@@ -918,7 +918,7 @@ void BackgroundSyncOrder() {
 
     baas::BackgroundSync();
 
-    // The reference's order: the request boxes, the friend list at its cooldown, then the module
+    // The earlier port's order: the request boxes, the friend list at its cooldown, then the module
     // caches -- blocks, the own user, the invitation inbox.
     assert(SentTo(0, "/friend_requests/inbox"));
     assert(SentTo(1, "/friend_requests/outbox"));

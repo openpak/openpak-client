@@ -471,7 +471,7 @@ void OpenPakAccountDialog::RefreshAccount() {
             if (!profile.name.empty()) {
                 name->setText(QString::fromStdString(profile.name));
             }
-            // The Switch identity's code wins, as in the reference; the site's fills in for an
+            // The Switch identity's code wins, as in the earlier port; the site's fills in for an
             // account without one.
             if (Common::OpenPakAccount::GetFriendCode().empty() && !profile.friend_code.empty()) {
                 account_code->setText(QString::fromStdString(profile.friend_code));

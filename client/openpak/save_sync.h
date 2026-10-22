@@ -66,7 +66,7 @@ struct LocalCopy {
 // Local I/O only. newest_cloud is the newest version's number, 0 when the cloud has none.
 LocalCopy Compare(const std::filesystem::path& save_dir, int newest_cloud);
 
-// The manual actions of the Cloud saves page, as the reference has them. Blocking, network; empty
+// The manual actions of the Cloud saves page, as the earlier port has them. Blocking, network; empty
 // on success, else why. Download takes the newest cloud copy even over a local one (kept beside
 // the folder as <folder>.openpak-backup, as PullBeforeLaunch keeps it): that is "take the cloud".
 // Upload sends the local copy as the version after newest_cloud (0 when the cloud has none), so

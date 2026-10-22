@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // The friends sysmodule's own REST surface (friends contract 22.5.0 §A), spoken to nx-baas and
-// to the Five invitation host, plus what it last answered. Ported from the earlier Ryujinx port
+// to the Five invitation host, plus what it last answered. Ported from OpenPak's earlier Ryujinx port
 // (Ryujinx.OpenPak/OpenPakBaas*.cs and the request half of OpenPakSession.Requests.cs).
 //
 // The session that holds the pinned client and the user-scoped bearer plugs itself in through
@@ -302,7 +302,7 @@ void SendFriendRequest(const FriendRequestSend& send);
 /// an id from before. Always 16 hex digits.
 std::string ReceiverId(std::uint64_t network_service_account_id);
 
-/// One background beat's worth of the module's syncs, in the reference's order: the request
+/// One background beat's worth of the module's syncs, in the earlier port's order: the request
 /// boxes, the friend list at its cooldown, then the module caches. The session's heartbeat calls
 /// it every third beat and once after each sign-in.
 void BackgroundSync();

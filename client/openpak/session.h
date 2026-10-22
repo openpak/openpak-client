@@ -104,7 +104,7 @@ std::string Link(const std::string& account_id_token);
 std::string LinkWithPassword(const std::string& email, const std::string& password);
 
 /// Keep saying we are here, which is the only way anyone can tell that we are, and keep the
-/// friends module's caches warm on the same beat (the reference's cadence: every third beat, the
+/// friends module's caches warm on the same beat (the earlier port's cadence: every third beat, the
 /// invitation inbox and baas::BackgroundSync; every beat, presence when it changed, and a forced
 /// republish every third). A sign-in is followed at once by a forced publish and a
 /// BackgroundSync, as a console syncs when its account becomes network-ready.
@@ -173,7 +173,7 @@ struct Response {
 /// user-scoped bearer from the login, with the sign-in refreshed first when it has aged out. This
 /// is how the friends module's own REST calls (openpak/baas.h) leave. `path_and_query` is sent as
 /// given; an empty `content_type` sends no body, and any other goes out with the body as UTF-8,
-/// "; charset=utf-8" appended the way the reference's StringContent writes it. Never throws.
+/// "; charset=utf-8" appended the way the earlier port's StringContent writes it. Never throws.
 Response SendAs(const std::string& method, const std::string& host,
                 const std::string& path_and_query, const std::string& content_type,
                 const std::string& body);

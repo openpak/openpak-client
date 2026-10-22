@@ -38,7 +38,7 @@ Branch `release-prep`, merged:
 
 ## v0.1.0 — 2026-09-23
 
-Ported from Ryujinx (the reference) so every host shares it:
+Ported from OpenPak's earlier Ryujinx port so every host shares it:
 
 - Sign-in chain bound to the running title; one OpenPak account per local profile; sign-in
   dialog; the account window's seven pages and its website calls; token revoked on sign-out
@@ -46,7 +46,7 @@ Ported from Ryujinx (the reference) so every host shares it:
   MyPage friend picker and invitation types
 - Session: presence from the title's declaration, friends caches on the heartbeat; a failing
   heartbeat is logged, never fatal
-- Cloud saves as Ryujinx does them (pull before launch, push on exit), in the client half so
+- Cloud saves as OpenPak's earlier Ryujinx port did them (pull before launch, push on exit), in the client half so
   Android syncs too; saves for every platform
 - Network profile: one client for every host; `X-OpenPak-Client` on every request
 - Penne push connection, BCAT datasets, NAT type test, catalogue statuses refreshed live
