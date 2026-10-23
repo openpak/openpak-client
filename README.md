@@ -1,5 +1,13 @@
 # openpak-client
 
+> **Current Switch client (2026-10-13): Harbor**, at
+> `~/REPOS/Openpak/emulators/harbor`. Harbor is an independent
+> OpenPak project based on Eden. Citron, Ryujinx (desktop and Android), and
+> the former OpenPak Eden checkouts have been removed. References to those
+> forks below record historical evidence only: do not run their commands,
+> reinstall them, or select them for current work. Use Harbor's README and
+> current handoff for builds and testing; old results do not establish Harbor parity.
+
 The OpenPak client library and Qt dialogs shared by the OpenPak emulator builds: sign-in,
 friends and requests, invitations, presence, recent players, play history, cloud saves, mods,
 status. Extracted from the Citron build's integration (GPL-2.0-or-later, so this library is
