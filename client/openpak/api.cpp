@@ -1502,6 +1502,31 @@ std::optional<int> PingBackend() {
     return static_cast<int>(elapsed_ms.count());
 }
 
+std::optional<int> PingUrl(const std::string& url) {
+    const auto scheme_end = url.find("://");
+    if (scheme_end == std::string::npos ||
+        (!url.starts_with("https://") && !url.starts_with("http://"))) {
+        return std::nullopt;
+    }
+    const std::size_t path_at = url.find('/', scheme_end + 3);
+    httplib::Client client{url.substr(0, path_at)};
+    client.set_connection_timeout(5);
+    client.set_read_timeout(5);
+    ApplyCaCertPath(client);
+    httplib::Headers headers{{"User-Agent", "citron-openpak"}};
+    if (std::string client_header = openpak::Platform::ClientHeader(); !client_header.empty()) {
+        headers.emplace("X-OpenPak-Client", std::move(client_header));
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const auto result = client.Get(path_at == std::string::npos ? "/" : url.substr(path_at), headers);
+    if (!result) {
+        return std::nullopt;
+    }
+    return static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - start)
+                                .count());
+}
+
 int PostCrashReport(const std::string& body, const std::string& content_type) {
     // The bearer when there is one, so the site can tell whose report it is. A 401 here does not
     // sign anybody out: a crash report is not the place to find out a token has lapsed.

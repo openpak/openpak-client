@@ -467,4 +467,9 @@ std::map<std::string, CatalogueTitle> Catalogue();
 // Round-trip time to the backend's /api/health in milliseconds, or nullopt on failure.
 std::optional<int> PingBackend();
 
+// Round-trip time of one GET to any http(s) URL (a console service the host addresses, say), in
+// milliseconds: any HTTP answer counts, nullopt when nothing answered within five seconds. Public
+// TLS trust, no account token, redirects not followed.
+std::optional<int> PingUrl(const std::string& url);
+
 } // namespace WebService::OpenPakApi
