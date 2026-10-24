@@ -29,6 +29,10 @@ if(NOT TARGET httplib::httplib)
 endif()
 if(NOT TARGET httplib::httplib AND NOT httplib_FOUND)
   set(HTTPLIB_REQUIRE_OPENSSL ON CACHE BOOL "" FORCE)
+  # The library never asks for brotli, and httplib would otherwise link whatever brotli the build
+  # machine has (Homebrew's arm64 dylibs on a macOS x86_64 cross build, a runtime dependency the
+  # host never ships).
+  set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
   FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG v0.18.3 GIT_SHALLOW TRUE)
   FetchContent_MakeAvailable(httplib)
 endif()
