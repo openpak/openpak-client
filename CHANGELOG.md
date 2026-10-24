@@ -19,6 +19,12 @@ of truth; this file is the readable summary.
   `client/openpak/playability_list.inc`, overridden by `Refresh()`
 - X-OpenPak-Client names the OS: `<name>/<version> (<os>)`, one of windows, macos, linux,
   android, ios, chosen at compile time; no suffix on any other platform
+- `WebService::OpenPakApi::Errors`: the sentences for not signed in, unreachable, expired,
+  wrong credentials and rate limited, so a host with its own strings tells them apart
+- `PingUrl(url)`: one timed GET to any http(s) URL (a console service the host addresses)
+- The ceiling filters a profile's `services[]` by URL host, and the effective digest counts them
+- `GetAccountFriends()` reads only the core's lists for a bearer-only account; the Switch adapter
+  is asked only by a host signed in with a Switch identity
 
 ## v0.4.1 — 2026-09-25
 
