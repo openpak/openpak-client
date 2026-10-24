@@ -911,7 +911,11 @@ AccountFriends GetAccountFriends() {
     std::vector<AccountFriend> adapter_friends;
     std::vector<AccountFriend> adapter_requests;
     std::string adapter_error;
-    if (const auto identity = FetchSwitch(adapter_error)) {
+    // The adapter's view belongs to a Switch identity this host signed in with. A bearer-only
+    // account (every non-Switch host) reads the core's lists alone, rather than asking the Switch
+    // adapter about an account that may never have used a Switch.
+    const bool linked = Common::OpenPakAccount::IsLinked();
+    if (const auto identity = linked ? FetchSwitch(adapter_error) : std::nullopt) {
         for (const auto& entry : identity->value("friends", nlohmann::json::array())) {
             adapter_friends.push_back(ParseAdapterFriend(entry));
         }
@@ -929,8 +933,10 @@ AccountFriends GetAccountFriends() {
     // place outgoing requests are listed.
     const auto core_friends = GetJson("/api/v1/me/friends", bearer);
     const auto core_requests = GetJson("/api/v1/me/friends/requests", bearer);
-    if (!core_friends && adapter_friends.empty() && !adapter_error.empty()) {
-        out.error = adapter_error;
+    if (!core_friends && adapter_friends.empty() && (!adapter_error.empty() || !linked)) {
+        out.error = Bearer().empty()        ? std::string{SessionExpired}
+                    : adapter_error.empty() ? std::string{Unreachable}
+                                            : adapter_error;
         return out;
     }
 
