@@ -10,12 +10,25 @@
 #include <span>
 #endif
 #include <string>
+#include <string_view>
 #include <vector>
 #include "openpak/types.h"
 
 namespace httplib { class Client; }
 
 namespace WebService::OpenPakApi {
+
+// The sentences the calls below answer with for the failures every host words in its own way.
+// A host with its own strings (a wx or Android UI) compares an error against these to tell them
+// apart; anything else is the website's own sentence or a fallback naming the HTTP status.
+namespace Errors {
+inline constexpr std::string_view NotSignedIn = "Not signed in.";
+inline constexpr std::string_view Unreachable = "Could not reach openpak.org.";
+inline constexpr std::string_view SessionExpired = "Your session expired. Sign in again.";
+inline constexpr std::string_view Credentials = "Wrong email or password.";
+inline constexpr std::string_view RateLimited = "Too many attempts. Wait a minute and try again.";
+inline constexpr std::string_view NotAvailable = "Not available on OpenPak yet.";
+} // namespace Errors
 
 // The base URL the account API talks to (openpak.org, or OPENPAK_API for a local stack) and
 // the shared HTTPS client, for the library's other modules and for hosts that need a raw

@@ -75,9 +75,9 @@ std::string g_saves_platform = "switch";
 std::string g_save_device; // empty: report the platform name
 constexpr int TimeoutSeconds = 15;
 
-constexpr std::string_view NotAvailable = "Not available on OpenPak yet.";
-constexpr std::string_view Unreachable = "Could not reach openpak.org.";
-constexpr std::string_view SessionExpired = "Your session expired. Sign in again.";
+constexpr std::string_view NotAvailable = Errors::NotAvailable;
+constexpr std::string_view Unreachable = Errors::Unreachable;
+constexpr std::string_view SessionExpired = Errors::SessionExpired;
 
 std::string Base64StdEncode(std::span<const u8> data) {
     static constexpr char table[] =
@@ -296,7 +296,7 @@ Friend ParseFriend(const nlohmann::json& json) {
 std::optional<nlohmann::json> FetchSwitch(std::string& error) {
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        error = "Not signed in.";
+        error = std::string{Errors::NotSignedIn};
         return std::nullopt;
     }
     const auto result = Send("GET", "/api/v1/me/switch", {}, bearer);
@@ -324,7 +324,7 @@ std::optional<nlohmann::json> FetchSwitch(std::string& error) {
 std::string FriendAction(const nlohmann::json& body) {
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        return "Not signed in.";
+        return std::string{Errors::NotSignedIn};
     }
     const auto result = Send("POST", "/api/v1/me/switch/friend", body.dump(), bearer);
     if (ClearSessionIfRejected(result)) {
@@ -466,11 +466,11 @@ LoginResult SignIn(const std::string& email, const std::string& password) {
         return out;
     }
     if (minted->status == 401) {
-        out.error = "Wrong email or password.";
+        out.error = std::string{Errors::Credentials};
         return out;
     }
     if (minted->status == 429) {
-        out.error = "Too many attempts. Wait a minute and try again.";
+        out.error = std::string{Errors::RateLimited};
         return out;
     }
     if (minted->status != 201 && minted->status != 200) {
@@ -529,11 +529,11 @@ LoginResult SignInAccountOnly(const std::string& email, const std::string& passw
         return out;
     }
     if (minted->status == 401) {
-        out.error = "Wrong email or password.";
+        out.error = std::string{Errors::Credentials};
         return out;
     }
     if (minted->status == 429) {
-        out.error = "Too many attempts. Wait a minute and try again.";
+        out.error = std::string{Errors::RateLimited};
         return out;
     }
     if (minted->status != 201 && minted->status != 200) {
@@ -618,7 +618,7 @@ std::string PushSave(const std::string& title_id_hex, const std::uint8_t* data,
                      std::size_t size) {
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        return "Not signed in.";
+        return std::string{Errors::NotSignedIn};
     }
     httplib::Headers headers{{"X-Save-Device",
         g_save_device.empty() ? g_saves_platform : g_save_device}};
@@ -699,7 +699,7 @@ Profile GetProfile() {
     Profile out;
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        out.error = "Not signed in.";
+        out.error = std::string{Errors::NotSignedIn};
         return out;
     }
     const auto result = Send("GET", "/api/v1/me", {}, bearer);
@@ -791,7 +791,7 @@ namespace {
 std::string PostAccount(const std::string& path, const nlohmann::json& body) {
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        return "Not signed in.";
+        return std::string{Errors::NotSignedIn};
     }
     const auto result = Send("POST", path, body.dump(), bearer);
     if (ClearSessionIfRejected(result)) {
@@ -904,7 +904,7 @@ AccountFriends GetAccountFriends() {
     AccountFriends out;
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        out.error = "Not signed in.";
+        out.error = std::string{Errors::NotSignedIn};
         return out;
     }
 
@@ -1164,7 +1164,7 @@ std::vector<CoreInvitation> GetInvitations() {
 std::string DeclineInvitation(const std::string& invitation_id) {
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        return "Not signed in.";
+        return std::string{Errors::NotSignedIn};
     }
     const nlohmann::json body{{"invitation_id", invitation_id}};
     const auto result = Send("POST", "/api/v1/me/invitations/decline", body.dump(), bearer);
@@ -1280,7 +1280,7 @@ CloudSaves GetCloudSaves() {
     CloudSaves out;
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        out.error = "Not signed in.";
+        out.error = std::string{Errors::NotSignedIn};
         return out;
     }
     const auto result = Send("GET", "/api/v1/me/saves", {}, bearer);
@@ -1341,7 +1341,7 @@ CloudSaves GetCloudSaves() {
 std::string DeleteSaveVersion(s64 version_id) {
     const std::string bearer = Bearer();
     if (bearer.empty()) {
-        return "Not signed in.";
+        return std::string{Errors::NotSignedIn};
     }
     const auto result =
         Send("DELETE", fmt::format("/api/v1/me/saves/versions/{}", version_id), {}, bearer);
