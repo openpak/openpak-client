@@ -233,6 +233,21 @@ int main() {
         assert(np::RedirectFor("nncs2-lp1.n.n.srv.nintendo.net", "") == "198.51.100.8");
     }
 
+    // Services are held to the ceiling by their URL's host, and count in the digest.
+    {
+        auto with_services = *profile;
+        np::FilterToCeiling(with_services, c3.FamiliesFor("switch"));
+        auto const before = np::EffectiveDigest(with_services);
+        with_services.services = {{"act", "https://account.nintendo.net/v1/api/"},
+                                  {"olv", "https://olv.evil.example/"},
+                                  {"nus", "https://user@nus.nintendo.net/"},
+                                  {"ecs", "not a url"}};
+        auto const dropped = np::FilterToCeiling(with_services, c3.FamiliesFor("switch"), false);
+        assert(dropped.size() == 3);
+        assert(with_services.services.size() == 1 && with_services.services[0].id == "act");
+        assert(np::EffectiveDigest(with_services) != before);
+    }
+
     // The digest: only this platform's effective set moves it.
     {
         auto a = *profile;

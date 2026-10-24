@@ -158,15 +158,15 @@ bool NameInFamilies(std::string const& host, std::vector<std::string> const& fam
 // NameInFamilies against this platform's families in CurrentCeiling().
 bool NameAllowed(std::string const& host, std::string const& platform);
 
-// Drops every suffix, exact name and override outside `families`, each one logged (unless `log`
-// is false), and returns what was dropped. `never` names stay: they only ever keep a name away
+// Drops every suffix, exact name, override and service (by its URL's host) outside `families`,
+// each one logged (unless `log` is false), and returns what was dropped. `never` names stay: they only ever keep a name away
 // from OpenPak.
 std::vector<std::string> FilterToCeiling(Profile& profile, std::vector<std::string> const& families,
                                          bool log = true);
 
 // The contract's digest of the effective redirect set: sha256 (hex) of the sorted
-// "family:<suffix>", "exact:<name>", "override:<name>=<ip>" and "address:<ip>" entries, one per
-// line. Only this platform's profile goes in, so another platform's change never changes it.
+// "family:<suffix>", "exact:<name>", "override:<name>=<ip>", "address:<ip>" and
+// "service:<id>=<url>" entries, one per line. Only this platform's profile goes in, so another platform's change never changes it.
 std::string EffectiveDigest(Profile const& profile);
 
 // ---------------------------------------------------------------------------------------------

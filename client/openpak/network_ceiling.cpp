@@ -497,6 +497,29 @@ bool NameInFamilies(std::string const& host, std::vector<std::string> const& fam
     return false;
 }
 
+namespace {
+
+// The host of "scheme://host[:port]/...", lower case; empty when the URL has none (or carries
+// credentials), which no family contains.
+std::string ServiceHost(std::string const& url) {
+    auto const scheme_end = url.find("://");
+    if (scheme_end == std::string::npos || scheme_end == 0) {
+        return {};
+    }
+    std::string rest = url.substr(scheme_end + 3);
+    rest = rest.substr(0, rest.find_first_of("/?#"));
+    if (rest.empty() || rest.find('@') != std::string::npos) {
+        return {};
+    }
+    if (rest.front() == '[') {
+        auto const close = rest.find(']');
+        return close == std::string::npos ? std::string{} : Lower(rest.substr(1, close - 1));
+    }
+    return Lower(rest.substr(0, rest.rfind(':')));
+}
+
+}  // namespace
+
 bool NameAllowed(std::string const& host, std::string const& platform) {
     return NameInFamilies(host, CurrentCeiling().FamiliesFor(platform));
 }
@@ -518,6 +541,11 @@ std::vector<std::string> FilterToCeiling(Profile& profile,
     std::erase_if(profile.suffixes, [&](auto const& n) { return !keep(n, "suffix"); });
     std::erase_if(profile.exact, [&](auto const& n) { return !keep(n, "exact name"); });
     std::erase_if(profile.overrides, [&](auto const& o) { return !keep(o.first, "override"); });
+    // A service URL is held to the ceiling by its host: a client that addresses URLs (Cemu) never
+    // reaches a name outside it either. One that does not parse goes too.
+    std::erase_if(profile.services, [&](auto const& service) {
+        return !keep(ServiceHost(service.url), "service host");
+    });
     return dropped;
 }
 
@@ -534,6 +562,9 @@ std::string EffectiveDigest(Profile const& profile) {
     }
     if (!profile.server_address.empty()) {
         entries.push_back("address:" + profile.server_address);
+    }
+    for (auto const& service : profile.services) {
+        entries.push_back("service:" + service.id + "=" + service.url);
     }
     std::sort(entries.begin(), entries.end());
     entries.erase(std::unique(entries.begin(), entries.end()), entries.end());
