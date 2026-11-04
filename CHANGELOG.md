@@ -11,7 +11,7 @@
 Generated from git history on 2026-09-15. `git log` stays the source
 of truth; this file is the readable summary.
 
-## Unreleased
+## v0.5.0 — 2026-11-04
 
 - Playability: what the catalogue says about how far *this* emulator runs a title, beside the
   OpenPak online status. `compatibility::FindPlayability(title_id)` answers for the emulator
@@ -25,6 +25,7 @@ of truth; this file is the readable summary.
 - The ceiling filters a profile's `services[]` by URL host, and the effective digest counts them
 - `GetAccountFriends()` reads only the core's lists for a bearer-only account; the Switch adapter
   is asked only by a host signed in with a Switch identity
+- cmake: the fetched cpp-httplib links no brotli; docs point at docs.openpak.org; old-network identifiers renamed to openpak
 
 ## v0.4.1 — 2026-09-25
 
